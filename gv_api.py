@@ -29,14 +29,36 @@ class VisionAPIClient:
 
     def process_image(self, image_path: Path) -> Dict[str, Any]:
         """Process image with Google Vision API and return full response."""
+        import time
+
+        print(f"  Starting API call for {image_path.name}...")
+        start_time = time.time()
+
+        # Read the already-optimized image file
         with open(image_path, 'rb') as image_file:
             content: bytes = image_file.read()
 
+        file_size_mb = len(content) / (1024 * 1024)
+        print(f"  Image size: {file_size_mb:.1f}MB")
+
+        # Create Vision API image object
         image = vision.Image(content=content)  # type: ignore
+
+        # API call - should be fast with pre-optimized images
+        api_start = time.time()
         response = self.client.document_text_detection(image=image)  # type: ignore
+        api_time = time.time() - api_start
+        print(f"  ✓ API response received in {api_time:.1f}s")
 
         if hasattr(response, 'error') and response.error and response.error.message:
             raise Exception(f"Vision API error: {response.error.message}")
 
-        # Google's built-in conversion - replaces all manual parsing!
-        return MessageToDict(response._pb)  # type: ignore
+        # Convert response to dict
+        convert_start = time.time()
+        result = MessageToDict(response._pb)  # type: ignore
+        convert_time = time.time() - convert_start
+
+        total_time = time.time() - start_time
+        print(f"  Total API time: {total_time:.1f}s")
+
+        return result
