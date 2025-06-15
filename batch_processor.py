@@ -13,7 +13,14 @@ from error_handler import ErrorHandler
 class OCRBatchProcessor:
     """Main application class that orchestrates the OCR processing workflow."""
 
-    def __init__(self, credentials_path: str = "credentials.json"):
+    def __init__(self, credentials_path: str = None):
+        # Resolve default credentials path if not provided
+        if credentials_path is None:
+            import os
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            credentials_path = os.path.join(script_dir, "credentials.json")
+            print(f"Using default credentials: {credentials_path}")
+
         self.db_manager = DatabaseManager()
         self.image_processor = ImageProcessor(self.db_manager)
         self.vision_client = VisionAPIClient(credentials_path)
