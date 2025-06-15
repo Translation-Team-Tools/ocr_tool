@@ -31,24 +31,7 @@ class ProgressTracker:
         self.current_image = image_num
         elapsed = time.time() - self.start_time
 
-        if image_num > 0:
-            avg_time = elapsed / image_num
-            remaining = (self.total_images - image_num) * avg_time
-            eta = self._format_time(remaining)
-        else:
-            eta = "calculating..."
-
         folder = os.path.dirname(image_path)
         filename = os.path.basename(image_path)
 
-        print(f"Processing: {folder}/{filename} ({image_num}/{self.total_images}) "
-              f"Stage {self.current_stage}/{self.total_stages} - ETA: {eta}")
-
-    def _format_time(self, seconds: float) -> str:
-        """Format seconds into human-readable time."""
-        if seconds < 60:
-            return f"{int(seconds)}s"
-        elif seconds < 3600:
-            return f"{int(seconds // 60)}m {int(seconds % 60)}s"
-        else:
-            return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
+        print(f"Processing: {folder}/{filename} ({image_num}/{self.total_images} images)")
