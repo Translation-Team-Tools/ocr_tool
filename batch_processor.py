@@ -13,7 +13,7 @@ from error_handler import ErrorHandler
 class OCRBatchProcessor:
     """Main application class that orchestrates the OCR processing workflow."""
 
-    def __init__(self, credentials_path: str = None):
+    def __init__(self, credentials_path: str = "credentials.json"):
         self.db_manager = DatabaseManager()
         self.image_processor = ImageProcessor(self.db_manager)
         self.vision_client = VisionAPIClient(credentials_path)
