@@ -50,7 +50,8 @@ class OCRBatchProcessor:
 
         # Stage 2: Copy images and check for duplicates
         progress.update_stage(2)
-        images_to_process = []
+        images_to_process = []  # New images that need OCR
+        existing_images = []  # Already processed images
 
         for i, image_path in enumerate(image_files, 1):
             progress.update_image(i, str(image_path))
@@ -59,33 +60,44 @@ class OCRBatchProcessor:
                 file_hash = self.image_processor.calculate_file_hash(image_path)
                 relative_path = str(image_path.relative_to(input_path))
 
-                if self.db_manager.is_processed(relative_path, file_hash):
-                    print(f"  Skipping (already processed): {image_path.name}")
-                    continue
+                # Check if already processed
+                processed_info = self.db_manager.get_processed_info(relative_path, file_hash)
 
-                copied_path = self.image_processor.copy_image(image_path, input_path, result_path)
-                images_to_process.append({
-                    'original_path': image_path,
-                    'copied_path': copied_path,
-                    'relative_path': relative_path,
-                    'file_hash': file_hash
-                })
+                if processed_info:
+                    print(f"  Using existing results: {image_path.name}")
+                    existing_images.append({
+                        'relative_path': relative_path,
+                        'vision_json_path': processed_info['vision_json_path']
+                    })
+                else:
+                    # New image - copy and prepare for processing
+                    copied_path = self.image_processor.copy_image(image_path, input_path, result_path)
+                    images_to_process.append({
+                        'original_path': image_path,
+                        'copied_path': copied_path,
+                        'relative_path': relative_path,
+                        'file_hash': file_hash
+                    })
 
             except Exception as e:
                 error_type = self.error_handler.categorize_error(e)
                 self.error_handler.add_error(str(image_path), error_type, str(e))
                 print(f"  Error copying {image_path.name}: {e}")
 
-        if not images_to_process:
-            print("All images already processed.")
-            return True
+        total_images = len(images_to_process) + len(existing_images)
+        print(f"Summary: {len(images_to_process)} new images, {len(existing_images)} already processed")
 
-        # Stage 3: OCR Processing
+        if total_images == 0:
+            print("No images to process.")
+            return False
+
+        # Stage 3: OCR Processing + Load Existing Results
         progress.update_stage(3)
-        processed_results = []
+        all_results = []
 
+        # Process new images with OCR
         for i, image_info in enumerate(images_to_process, 1):
-            progress.update_image(i, image_info['relative_path'])
+            progress.update_image(i, f"[NEW] {image_info['relative_path']}")
 
             try:
                 # Process with Vision API
@@ -107,9 +119,10 @@ class OCRBatchProcessor:
                     'completed'
                 )
 
-                processed_results.append({
+                all_results.append({
                     'relative_path': image_info['relative_path'],
-                    'vision_response': vision_response
+                    'vision_response': vision_response,
+                    'source': 'new'
                 })
 
             except Exception as e:
@@ -125,17 +138,46 @@ class OCRBatchProcessor:
                 )
                 print(f"  Error processing {image_info['original_path'].name}: {e}")
 
+        # Load existing results from JSON files
+        for i, existing_info in enumerate(existing_images, 1):
+            progress.update_image(len(images_to_process) + i, f"[EXISTING] {existing_info['relative_path']}")
+
+            try:
+                json_path = Path(existing_info['vision_json_path'])
+                if json_path.exists():
+                    with open(json_path, 'r', encoding='utf-8') as f:
+                        vision_response = json.load(f)
+
+                    all_results.append({
+                        'relative_path': existing_info['relative_path'],
+                        'vision_response': vision_response,
+                        'source': 'existing'
+                    })
+                    print(f"  Loaded existing JSON: {json_path.name}")
+                else:
+                    print(f"  Warning: JSON file not found: {json_path}")
+
+            except Exception as e:
+                print(f"  Error loading existing result for {existing_info['relative_path']}: {e}")
+
         # Stage 4: Analyze results
         progress.update_stage(4)
         final_results = []
 
-        for result in processed_results:
-            analyzed = self.text_analyzer.analyze_vision_response(result['vision_response'])
-            final_results.append({
-                'relative_path': result['relative_path'],
-                'regular_text': analyzed['regular_paragraphs'],
-                'furigana_text': analyzed['furigana_paragraphs']
-            })
+        for result in all_results:
+            try:
+                analyzed = self.text_analyzer.analyze_vision_response(result['vision_response'])
+                final_results.append({
+                    'relative_path': result['relative_path'],
+                    'regular_text': analyzed['regular_paragraphs'],
+                    'furigana_text': analyzed['furigana_paragraphs'],
+                    'source': result['source']
+                })
+            except Exception as e:
+                print(f"  Error analyzing {result['relative_path']}: {e}")
+
+        # Sort results by relative path for consistent ordering
+        final_results.sort(key=lambda x: x['relative_path'])
 
         # Stage 5: Generate output
         progress.update_stage(5)
@@ -147,8 +189,15 @@ class OCRBatchProcessor:
             print("\nRetrying failed images...")
             # Here you could implement retry logic
 
-        print(f"\nProcessing complete! Processed {len(final_results)} images successfully.")
+        new_count = len([r for r in final_results if r.get('source') == 'new'])
+        existing_count = len([r for r in final_results if r.get('source') == 'existing'])
+
+        print(f"\nProcessing complete!")
+        print(f"  New images processed: {new_count}")
+        print(f"  Existing images included: {existing_count}")
+        print(f"  Total in output: {len(final_results)}")
+
         if self.error_handler.failed_images:
-            print(f"Failed: {len(self.error_handler.failed_images)} images")
+            print(f"  Failed: {len(self.error_handler.failed_images)} images")
 
         return True

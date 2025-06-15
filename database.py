@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, Tuple
 
 
 class DatabaseManager:
@@ -43,6 +43,21 @@ class DatabaseManager:
             )
             result = cursor.fetchone()
             return result and result[0] == 'completed'
+
+    def get_processed_info(self, file_path: str, file_hash: str) -> Optional[Dict]:
+        """Get processing info for already processed image."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT status, vision_json_path FROM processed_images WHERE file_path = ? AND file_hash = ?",
+                (file_path, file_hash)
+            )
+            result = cursor.fetchone()
+            if result and result[0] == 'completed':
+                return {
+                    'status': result[0],
+                    'vision_json_path': result[1]
+                }
+            return None
 
     def add_processed_image(self, file_path: str, filename: str, file_hash: str,
                             vision_json_path: str, status: str = 'completed',
