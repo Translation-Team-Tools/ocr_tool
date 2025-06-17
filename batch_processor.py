@@ -1,4 +1,3 @@
-import json
 from pathlib import Path
 
 from database import DatabaseManager
@@ -103,12 +102,9 @@ class OCRBatchProcessor:
                 # Process with Vision API
                 vision_response = self.vision_client.process_image(image_info['copied_path'])
 
-                # Save JSON response
+                # Save JSON response for caching
                 json_path = result_path / "gv_results" / f"{image_info['relative_path']}.json"
-                json_path.parent.mkdir(parents=True, exist_ok=True)
-
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(vision_response, f, ensure_ascii=False, indent=2)
+                self.vision_client.save_response_as_json(vision_response, json_path)
 
                 # Mark as processed in database
                 self.db_manager.add_processed_image(
@@ -138,15 +134,15 @@ class OCRBatchProcessor:
                 )
                 print(f"  Error processing {image_info['original_path'].name}: {e}")
 
-        # Load existing results from JSON files
+        # Load existing results from JSON files and convert to Vision objects
         for i, existing_info in enumerate(existing_images, 1):
             progress.update_image(len(images_to_process) + i, f"[EXISTING] {existing_info['relative_path']}")
 
             try:
                 json_path = Path(existing_info['vision_json_path'])
                 if json_path.exists():
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        vision_response = json.load(f)
+                    # Load and deserialize back to Vision object
+                    vision_response = self.vision_client.load_response_from_json(json_path)
 
                     all_results.append({
                         'relative_path': existing_info['relative_path'],

@@ -1,10 +1,10 @@
+import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Any
 
 from google.cloud import vision
-from google.protobuf.json_format import MessageToDict
+from google.protobuf.json_format import MessageToDict, ParseDict, MessageToJson, Parse
 
 
 class VisionAPIClient:
@@ -27,8 +27,8 @@ class VisionAPIClient:
             print("3. Pass credentials_path parameter")
             sys.exit(1)
 
-    def process_image(self, image_path: Path) -> Dict[str, Any]:
-        """Process image with Google Vision API and return full response."""
+    def process_image(self, image_path: Path) -> vision.AnnotateImageResponse:
+        """Process image with Google Vision API and return Vision object."""
         import time
 
         print(f"  Starting API call for {image_path.name}...")
@@ -53,12 +53,28 @@ class VisionAPIClient:
         if hasattr(response, 'error') and response.error and response.error.message:
             raise Exception(f"Vision API error: {response.error.message}")
 
-        # Convert response to dict
-        convert_start = time.time()
-        result = MessageToDict(response._pb)  # type: ignore
-        convert_time = time.time() - convert_start
-
         total_time = time.time() - start_time
         print(f"  Total API time: {total_time:.1f}s")
 
-        return result
+        return response
+
+    def save_response_as_json(self, response: vision.AnnotateImageResponse, json_path: Path) -> None:
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Direct protobuf to JSON string
+        json_string = MessageToJson(response._pb)
+
+        with open(json_path, 'w', encoding='utf-8') as f:
+            f.write(json_string)
+
+    def load_response_from_json(self, json_path: Path) -> vision.AnnotateImageResponse:
+        if not json_path.exists():
+            raise FileNotFoundError(f"JSON file not found: {json_path}")
+
+        with open(json_path, 'r', encoding='utf-8') as f:
+            json_string = f.read()
+
+        # Direct JSON string to protobuf
+        response = vision.AnnotateImageResponse()
+        Parse(json_string, response)
+        return response

@@ -1,6 +1,7 @@
 import statistics
-import re
 from typing import Dict, Tuple, List
+
+from google.cloud import vision
 
 
 class TextAnalyzer:
@@ -18,31 +19,27 @@ class TextAnalyzer:
             'very_low': '[???]'
         }
 
-    def analyze_vision_response(self, vision_data: Dict) -> Dict:
+    def analyze_vision_response(self, vision_response: vision.AnnotateImageResponse) -> Dict:
         """Analyze Vision API response for text extraction and furigana detection."""
-        # Handle both camelCase (MessageToDict) and snake_case (manual parsing) formats
-        full_text_annotation = (
-                vision_data.get('fullTextAnnotation') or  # MessageToDict format
-                vision_data.get('full_text_annotation')  # Manual parsing format
-        )
+        # Work with proper Vision object
+        full_text_annotation = vision_response.full_text_annotation
 
         if not full_text_annotation:
             print("  Warning: No text annotation found in response")
             return {'regular_paragraphs': [], 'furigana_paragraphs': []}
 
-        # Extract all paragraphs
+        # Extract all paragraphs from Vision object
         paragraphs = []
-        pages = full_text_annotation.get('pages', [])
+        pages = full_text_annotation.pages
 
         if not pages:
             print("  Warning: No pages found in text annotation")
             return {'regular_paragraphs': [], 'furigana_paragraphs': []}
 
         for page in pages:
-            blocks = page.get('blocks', [])
+            blocks = page.blocks
             for block in blocks:
-                block_paragraphs = block.get('paragraphs', [])
-                paragraphs.extend(block_paragraphs)
+                paragraphs.extend(block.paragraphs)
 
         if not paragraphs:
             print("  Warning: No paragraphs found in pages")
@@ -82,10 +79,7 @@ class TextAnalyzer:
         # Collect all bounding box data for analysis
         all_boxes = []
         for paragraph in paragraphs:
-            bounding_box = (
-                    paragraph.get('boundingBox') or
-                    paragraph.get('bounding_box')
-            )
+            bounding_box = paragraph.bounding_box
             if bounding_box:
                 width = self._calculate_paragraph_width(bounding_box)
                 height = self._calculate_paragraph_height(bounding_box)
@@ -215,52 +209,51 @@ class TextAnalyzer:
         hiragana_ratio = hiragana_count / total_japanese
         return hiragana_ratio >= 0.8 and kanji_count == 0
 
-    def _calculate_paragraph_width(self, bounding_box: Dict) -> float:
+    def _calculate_paragraph_width(self, bounding_box) -> float:
         """Calculate width of paragraph bounding box."""
-        vertices = bounding_box.get('vertices', [])
+        vertices = bounding_box.vertices
         if len(vertices) < 2:
             return 0
 
         try:
-            x1 = vertices[0].get('x', 0)
-            x2 = vertices[1].get('x', 0)
+            x1 = vertices[0].x
+            x2 = vertices[1].x
             return abs(x2 - x1)
-        except (IndexError, TypeError):
+        except (IndexError, AttributeError):
             return 0
 
-    def _calculate_paragraph_height(self, bounding_box: Dict) -> float:
+    def _calculate_paragraph_height(self, bounding_box) -> float:
         """Calculate height of paragraph bounding box."""
-        vertices = bounding_box.get('vertices', [])
+        vertices = bounding_box.vertices
         if len(vertices) < 4:
             return 0
 
         try:
-            y1 = vertices[0].get('y', 0)
-            y3 = vertices[2].get('y', 0)  # Opposite corner
+            y1 = vertices[0].y
+            y3 = vertices[2].y  # Opposite corner
             return abs(y3 - y1)
-        except (IndexError, TypeError):
+        except (IndexError, AttributeError):
             return 0
 
-    def _get_paragraph_y_position(self, bounding_box: Dict) -> float:
+    def _get_paragraph_y_position(self, bounding_box) -> float:
         """Get the Y position (top) of the paragraph."""
-        vertices = bounding_box.get('vertices', [])
+        vertices = bounding_box.vertices
         if not vertices:
             return 0
 
         try:
-            return vertices[0].get('y', 0)
-        except (IndexError, TypeError):
+            return vertices[0].y
+        except (IndexError, AttributeError):
             return 0
 
-    def _extract_plain_text(self, paragraph: Dict) -> str:
+    def _extract_plain_text(self, paragraph) -> str:
         """Extract plain text from paragraph without confidence markers."""
         text_parts = []
-        words = paragraph.get('words', [])
+        words = paragraph.words
         for word in words:
-            symbols = word.get('symbols', [])
+            symbols = word.symbols
             for symbol in symbols:
-                text = symbol.get('text', '')
-                text_parts.append(text)
+                text_parts.append(symbol.text)
         return ''.join(text_parts)
 
     def _is_mostly_hiragana(self, text: str) -> bool:
@@ -310,23 +303,20 @@ class TextAnalyzer:
         """Check if character is Japanese (hiragana, katakana, or kanji)."""
         return self._is_hiragana(char) or self._is_katakana(char) or self._is_kanji(char)
 
-    def _process_paragraph_text(self, paragraph: Dict) -> str:
+    def _process_paragraph_text(self, paragraph) -> str:
         """Extract text from paragraph with confidence markers."""
         text_parts = []
 
-        words = paragraph.get('words', [])
+        words = paragraph.words
         for word in words:
-            symbols = word.get('symbols', [])
+            symbols = word.symbols
             for symbol in symbols:
-                text = symbol.get('text', '')
-                # Handle confidence as either float or string
-                confidence_raw = symbol.get('confidence', 1.0)
+                text = symbol.text
+                # Handle confidence from Vision object
+                confidence = getattr(symbol, 'confidence', 1.0)
 
                 try:
-                    if isinstance(confidence_raw, str):
-                        confidence = float(confidence_raw)
-                    else:
-                        confidence = float(confidence_raw) if confidence_raw is not None else 1.0
+                    confidence = float(confidence) if confidence is not None else 1.0
                 except (ValueError, TypeError):
                     confidence = 1.0
 
