@@ -1,6 +1,28 @@
 from pathlib import Path
+from datetime import datetime
 from typing import Optional, List
-from models import Image, ProcessingStatus, ImageRecord, db
+from peewee import *
+from models.models import Image, ProcessingStatus
+
+# Database connection
+db = SqliteDatabase('result/processing.db')
+
+
+class ImageRecord(Model):
+    """Peewee model for image records in database."""
+    file_path = CharField(unique=True)
+    optimized_file_path = CharField(null=True)
+    filename = CharField()
+    file_hash = CharField()
+    vision_json_path = CharField(default='')
+    status = CharField(default='pending')
+    processed_at = DateTimeField(null=True)
+    error_message = TextField(null=True)
+    created_at = DateTimeField(default=datetime.now)
+
+    class Meta:
+        database = db
+        table_name = 'images'
 
 
 class DatabaseManager:

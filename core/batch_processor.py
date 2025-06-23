@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List
 from models.models import Image, ProcessingStatus
 from image_optimizer import ImageOptimizer
+from database import DatabaseManager
 
 
 class BatchProcessor:
@@ -11,6 +12,7 @@ class BatchProcessor:
     def __init__(self):
         self.supported_formats = {'.jpg', '.jpeg', '.png'}
         self.image_optimizer = ImageOptimizer()
+        self.db_manager = DatabaseManager()
 
     def process_folder(self, folder_path: str) -> List[Image]:
         """Process all images in folder and return populated Image models."""
@@ -34,8 +36,7 @@ class BatchProcessor:
             relative_path = str(file_path.relative_to(input_path))
 
             # Check database for existing record
-            # TODO: Replace with actual database call
-            existing_image = self._db_get_image_by_path(relative_path)
+            existing_image = self.db_manager.get_image_by_path(relative_path)
 
             if existing_image:
                 # Compare hashes
@@ -65,8 +66,7 @@ class BatchProcessor:
 
             # Update database with processed results
             for image in processed_images:
-                # TODO: Replace with actual database call
-                self._db_save_image(image)
+                self.db_manager.save_image(image)
 
             all_images.extend(processed_images)
 
@@ -116,14 +116,3 @@ class BatchProcessor:
             for chunk in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(chunk)
         return sha256_hash.hexdigest()
-
-    # Database placeholder methods
-    def _db_get_image_by_path(self, file_path: str) -> Image:
-        """Placeholder: Get image record by file path."""
-        # TODO: Replace with actual database call
-        return None
-
-    def _db_save_image(self, image: Image) -> int:
-        """Placeholder: Save or update image record."""
-        # TODO: Replace with actual database call
-        return 0

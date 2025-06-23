@@ -1,7 +1,7 @@
 import time
 from pathlib import Path
 from typing import List
-from models import Image, ProcessingStatus
+from models.models import Image, ProcessingStatus
 
 try:
     from PIL import Image as PILImage
