@@ -1,11 +1,10 @@
 import argparse
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import List
 
 from data.models import Image, ProcessingStatus
-from data.local_storage import LocalStorage  # Import the LocalStorage class
+from data.storage_manager import StorageManager
 
 
 class OCRQuality(Enum):
@@ -37,22 +36,26 @@ class OptimizationSettings:
 class ImageProcessor:
     """
     Processes images for optimal OCR recognition with Google Vision API.
-    Now uses LocalStorage for all file system operations.
+    Now uses StorageManager for unified storage operations.
     """
 
-    def __init__(self, output_folder: str = "optimized_images"):
+    def __init__(self, input_folder_path: str, output_folder: str = "optimized_images", project_root: str = None):
         """
         Initialize the image processor.
 
         Args:
+            input_folder_path: Path to folder containing images
             output_folder: Where to save optimized images
+            project_root: Project root for database location
         """
-        self.output_folder = Path(output_folder)
-        self.supported_formats = {'.jpg', '.jpeg', '.png'}
         self.settings = OptimizationSettings()
 
-        # Initialize LocalStorage with supported formats
-        self.storage = LocalStorage()
+        # Initialize StorageManager (handles both file system and database)
+        self.storage_manager = StorageManager(
+            input_folder_path=input_folder_path,
+            output_folder=output_folder,
+            project_root=project_root
+        )
 
     def configure_optimization(self,
                                quality: OCRQuality = OCRQuality.BALANCED,
@@ -72,186 +75,192 @@ class ImageProcessor:
             convert_to_grayscale=convert_to_grayscale
         )
 
-    def discover_and_create_images(self, input_folder_path: str) -> List[Image]:
+    def discover_and_save_images(self) -> List[Image]:
         """
-        Find all images in folder and create Image objects.
-
-        Args:
-            input_folder_path: Path to folder containing images
+        Discover all images and save them to database.
 
         Returns:
-            List of Image objects with metadata
+            List of Image objects saved to database
         """
-        # Use LocalStorage to validate path
-        input_path = self.storage.validate_path_exists(input_folder_path)
+        return self.storage_manager.discover_and_save_images()
 
-        # Use LocalStorage to discover images
-        image_files = self.storage.discover_files_recursive(input_path)
-        images_list = []
-
-        print(f"Found {len(image_files)} images in {input_folder_path}")
-
-        for file_path in image_files:
-            try:
-                # Use LocalStorage to calculate relative path
-                relative_path = self.storage.get_relative_path(file_path, input_path)
-
-                # Create Image object
-                image = Image(
-                    filename=file_path.name,
-                    original_file_path=str(relative_path),
-                    file_hash=self.storage.calculate_file_hash(file_path),
-                    status=ProcessingStatus.PENDING
-                )
-
-                images_list.append(image)
-
-            except Exception as e:
-                print(f"Warning: Could not process {file_path.name}: {e}")
-
-        return images_list
-
-    def optimize_images(self, images_list: List[Image], input_folder_path: str) -> List[Image]:
+    def optimize_all_pending_images(self) -> List[Image]:
         """
-        Optimize images for OCR and save to output folder.
-
-        Args:
-            images_list: List of Image objects to process
-            input_folder_path: Original folder containing the images
+        Optimize all pending images using current settings.
 
         Returns:
-            List of Image objects with updated status and paths
+            List of processed Image objects
         """
-        input_path = Path(input_folder_path)
-        processed_images_list = []
-
-        print(f"Optimizing {len(images_list)} images with {self.settings.quality.value} quality...")
-        print(f"Settings: contrast={self.settings.enhance_contrast}, "
-              f"grayscale={self.settings.convert_to_grayscale}")
-
-        for i, image in enumerate(images_list, 1):
-            print(f"  [{i}/{len(images_list)}] Processing {image.filename}...")
-
-            try:
-                # Construct full source path
-                source_path = input_path / image.original_file_path
-
-                # Use LocalStorage to optimize and save image
-                optimized_path = self._optimize_and_save_image(source_path, image.original_file_path)
-
-                # Update image model
-                image.optimized_file_path = str(self.storage.get_relative_path(optimized_path, self.output_folder))
-                image.status = ProcessingStatus.COMPLETED
-
-                processed_images_list.append(image)
-
-            except Exception as e:
-                # Handle processing errors
-                image.status = ProcessingStatus.FAILED
-                image.error_message = str(e)
-                processed_images_list.append(image)
-                print(f"    Error: {e}")
-
-        successful = len([img_obj for img_obj in processed_images_list if img_obj.status == ProcessingStatus.COMPLETED])
-        print(f"\nCompleted: {successful}/{len(images_list)} images optimized successfully")
-
-        return processed_images_list
-
-    def _optimize_and_save_image(self, source_path: Path, relative_path: str) -> Path:
-        """Optimize single image for OCR and save using LocalStorage."""
-        # Use LocalStorage to create output path (force .jpg extension)
-        destination = self.storage.create_output_path(
-            str(self.output_folder),
-            relative_path,
-            force_extension='.jpg'
+        return self.storage_manager.optimize_images_batch(
+            images_list=None,  # Will get all pending images
+            max_width=self.settings.max_width,
+            jpeg_quality=self.settings.jpeg_quality,
+            enhance_contrast=self.settings.enhance_contrast,
+            convert_to_grayscale=self.settings.convert_to_grayscale
         )
 
-        # Use LocalStorage to check if file already exists
-        if self.storage.file_exists(destination):
-            print(f"    Skipped: Already exists")
-            return destination
+    def optimize_specific_images(self, images_list: List[Image]) -> List[Image]:
+        """
+        Optimize specific images using current settings.
 
-        # Use LocalStorage to optimize and save
-        self._ocr_optimize_and_save(source_path, destination)
-        return destination
+        Args:
+            images_list: List of Image objects to optimize
 
-    def _ocr_optimize_and_save(self, source_path: Path, destination: Path):
-        """Optimize image specifically for OCR processing using LocalStorage."""
-        try:
-            # Get original image dimensions for reporting
-            with self.storage.open_image(source_path) as img_obj:
-                original_dimensions = img_obj.size
+        Returns:
+            List of processed Image objects
+        """
+        return self.storage_manager.optimize_images_batch(
+            images_list=images_list,
+            max_width=self.settings.max_width,
+            jpeg_quality=self.settings.jpeg_quality,
+            enhance_contrast=self.settings.enhance_contrast,
+            convert_to_grayscale=self.settings.convert_to_grayscale
+        )
 
-            # Use LocalStorage to optimize image
-            original_size, optimized_size, processing_time = self.storage.optimize_image_for_ocr(
-                source_path=source_path,
-                destination=destination,
-                max_width=self.settings.max_width,
-                jpeg_quality=self.settings.jpeg_quality,
-                enhance_contrast=self.settings.enhance_contrast,
-                convert_to_grayscale=self.settings.convert_to_grayscale
-            )
+    def run_full_pipeline(self) -> List[Image]:
+        """
+        Run the complete pipeline: discover, save, and optimize images.
 
-            # Get new dimensions for reporting
-            with self.storage.open_image(destination) as img_obj:
-                new_dimensions = img_obj.size
+        Returns:
+            List of processed Image objects
+        """
+        print("🔍 Starting image processing pipeline...")
 
-            # Prepare enhancement list for reporting
-            enhancements = []
-            if self.settings.enhance_contrast:
-                enhancements.append("contrast+")
-            if self.settings.convert_to_grayscale:
-                enhancements.append("grayscale")
+        # Step 1: Discover and save images to database
+        print("\n📁 Step 1: Discovering images...")
+        images = self.discover_and_save_images()
 
-            # Use LocalStorage to print optimization stats
-            self.storage.print_optimization_stats(
-                original_size=original_size,
-                optimized_size=optimized_size,
-                processing_time=processing_time,
-                original_dimensions=original_dimensions,
-                new_dimensions=new_dimensions,
-                enhancements=enhancements
-            )
+        # Step 2: Show current status
+        print("\n📊 Current status:")
+        self.storage_manager.print_processing_summary()
 
-        except Exception as e:
-            print(f"    Warning: Could not optimize {source_path.name}, copying original: {e}")
-            # Use LocalStorage for fallback copy
-            self.storage.copy_file(source_path, destination)
+        # Step 3: Optimize pending images
+        print(f"\n⚡ Step 2: Optimizing images with {self.settings.quality.value} quality...")
+        processed_images = self.optimize_all_pending_images()
 
-            # Print simple copy stats
-            original_size = self.storage.get_file_size(source_path)
-            size_mb = self.storage.format_file_size(original_size)
-            print(f"    Copied: {size_mb} (no optimization)")
+        # Step 4: Show final results
+        print("\n✅ Pipeline completed!")
+        self.storage_manager.print_processing_summary()
+
+        return processed_images
+
+    def search_images(self, search_term: str) -> List[Image]:
+        """Search images by filename or path."""
+        return self.storage_manager.search_images(search_term)
+
+    def retry_failed_images(self) -> List[Image]:
+        """
+        Retry processing failed images.
+
+        Returns:
+            List of processed Image objects
+        """
+        failed_images = self.storage_manager.get_image(status=ProcessingStatus.FAILED)
+        if not failed_images:
+            print("No failed images to retry")
+            return []
+
+        print(f"🔄 Retrying {len(failed_images)} failed images...")
+
+        # Reset status to pending
+        for image in failed_images:
+            self.storage_manager.update_image_status(image.id, ProcessingStatus.PENDING)
+
+        # Retry optimization
+        return self.optimize_specific_images(failed_images)
+
+    def print_summary(self):
+        """Print processing summary."""
+        self.storage_manager.print_processing_summary()
+
+    def close(self):
+        """Clean up resources."""
+        self.storage_manager.close()
+
+    def __enter__(self):
+        """Context manager entry."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        self.close()
 
 
 # Example usage
 if __name__ == "__main__":
-    # Initialize processor
-    processor = ImageProcessor("optimized_for_ocr")
+    parser = argparse.ArgumentParser(description="Process images for OCR optimization")
+    parser.add_argument('input_path', help='Path to the folder containing images')
+    parser.add_argument('--output', '-o', default='optimized_for_ocr', help='Output folder for optimized images')
+    parser.add_argument('--quality', '-q', choices=['fast', 'balanced', 'best'],
+                        default='balanced', help='Optimization quality preset')
+    parser.add_argument('--grayscale', '-g', action='store_true',
+                        help='Convert images to grayscale (good for documents)')
+    parser.add_argument('--no-contrast', action='store_true',
+                        help='Disable contrast enhancement')
+    parser.add_argument('--discover-only', action='store_true',
+                        help='Only discover and save images, do not optimize')
+    parser.add_argument('--optimize-only', action='store_true',
+                        help='Only optimize pending images, do not discover new ones')
+    parser.add_argument('--retry-failed', action='store_true',
+                        help='Retry processing failed images')
+    parser.add_argument('--summary', action='store_true',
+                        help='Show processing summary and exit')
 
-    # Configure for best OCR results
-    processor.configure_optimization(
-        quality=OCRQuality.BEST,
-        enhance_contrast=True,
-        convert_to_grayscale=False  # Set True for document scans
-    )
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument('input_path', help='Path to the folder')
     args = parser.parse_args()
 
-    # Process images
-    input_folder = args.input_path
+    # Convert quality string to enum
+    quality_map = {
+        'fast': OCRQuality.FAST,
+        'balanced': OCRQuality.BALANCED,
+        'best': OCRQuality.BEST
+    }
 
-    # Discover and create Image objects
-    images = processor.discover_and_create_images(input_folder)
+    # Initialize processor with context manager for proper cleanup
+    with ImageProcessor(
+            input_folder_path=args.input_path,
+            output_folder=args.output,
+    ) as processor:
 
-    # Optimize for OCR
-    processed_images = processor.optimize_images(images, input_folder)
+        # Configure optimization settings
+        processor.configure_optimization(
+            quality=quality_map[args.quality],
+            enhance_contrast=not args.no_contrast,
+            convert_to_grayscale=args.grayscale
+        )
 
-    # Check results
-    for img in processed_images:
-        if img.status == ProcessingStatus.COMPLETED:
-            print(f"✓ {img.filename} -> {img.optimized_file_path}")
-        else:
-            print(f"✗ {img.filename}: {img.error_message}")
+        try:
+            if args.summary:
+                # Just show summary
+                processor.print_summary()
+
+            elif args.retry_failed:
+                # Retry failed images
+                processor.retry_failed_images()
+
+            elif args.discover_only:
+                # Only discover and save images
+                processor.discover_and_save_images()
+                processor.print_summary()
+
+            elif args.optimize_only:
+                # Only optimize pending images
+                processor.optimize_all_pending_images()
+                processor.print_summary()
+
+            else:
+                # Run full pipeline
+                processed_images = processor.run_full_pipeline()
+
+                # Show results
+                print(f"\n📋 Final Results:")
+                for img in processed_images:
+                    if img.status == ProcessingStatus.COMPLETED:
+                        print(f"✓ {img.filename} -> {img.optimized_file_path}")
+                    else:
+                        print(f"✗ {img.filename}: {img.status.value}")
+
+        except KeyboardInterrupt:
+            print("\n⚠️  Processing interrupted by user")
+        except Exception as e:
+            print(f"\n❌ Error during processing: {e}")
+            raise

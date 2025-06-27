@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Image, ProcessingStatus
+from data.models import Base, Image, ProcessingStatus
 
 
 class Database:
@@ -138,10 +138,11 @@ class Database:
             Updated Image object
         """
         with self.get_session() as session:
-            session.merge(image)
+            merged_image = session.merge(image)  # Assign the merged instance
             session.flush()
-            session.expunge(image)
-            return image
+            session.refresh(merged_image)  # Refresh to get updated data
+            session.expunge(merged_image)  # Expunge the merged instance
+            return merged_image  # Return the merged instance
 
     def delete_image(self, image_id: int) -> bool:
         """
