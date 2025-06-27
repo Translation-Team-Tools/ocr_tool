@@ -1,31 +1,28 @@
 import argparse
-import hashlib
-import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import List
 
-from PIL import Image as PILImage, ImageEnhance
-
 from data.models import Image, ProcessingStatus
+from data.local_storage import LocalStorage  # Import the LocalStorage class
 
 
 class OCRQuality(Enum):
     """Simple quality options for OCR optimization."""
-    FAST = "fast"  # Smaller files, faster processing
-    BALANCED = "balanced"  # Good balance of quality and speed
-    BEST = "best"  # Highest quality for difficult text
+    FAST = "fast"
+    BALANCED = "balanced"
+    BEST = "best"
 
 
 @dataclass
 class OptimizationSettings:
     """OCR optimization settings with user-friendly options."""
     quality: OCRQuality = OCRQuality.BALANCED
-    enhance_contrast: bool = True  # Makes text more readable
-    convert_to_grayscale: bool = False  # Can improve OCR for some documents
-    max_width: int = 2048  # Larger images for better text recognition
-    jpeg_quality: int = 90  # High quality for text preservation
+    enhance_contrast: bool = True
+    convert_to_grayscale: bool = False
+    max_width: int = 2048
+    jpeg_quality: int = 90
 
     def __post_init__(self):
         """Adjust settings based on quality preset."""
@@ -40,13 +37,7 @@ class OptimizationSettings:
 class ImageProcessor:
     """
     Processes images for optimal OCR recognition with Google Vision API.
-
-    Features:
-    - Discovers images in folders recursively
-    - Creates structured Image objects with metadata
-    - Optimizes images specifically for text recognition
-    - Provides simple quality presets for non-technical users
-    - Tracks processing status and errors
+    Now uses LocalStorage for all file system operations.
     """
 
     def __init__(self, output_folder: str = "optimized_images"):
@@ -59,6 +50,9 @@ class ImageProcessor:
         self.output_folder = Path(output_folder)
         self.supported_formats = {'.jpg', '.jpeg', '.png'}
         self.settings = OptimizationSettings()
+
+        # Initialize LocalStorage with supported formats
+        self.storage = LocalStorage()
 
     def configure_optimization(self,
                                quality: OCRQuality = OCRQuality.BALANCED,
@@ -88,25 +82,25 @@ class ImageProcessor:
         Returns:
             List of Image objects with metadata
         """
-        input_path = Path(input_folder_path)
-        if not input_path.exists():
-            raise ValueError(f"Input folder does not exist: {input_folder_path}")
+        # Use LocalStorage to validate path
+        input_path = self.storage.validate_path_exists(input_folder_path)
 
-        image_files = self._discover_images(input_path)
+        # Use LocalStorage to discover images
+        image_files = self.storage.discover_files_recursive(input_path)
         images_list = []
 
         print(f"Found {len(image_files)} images in {input_folder_path}")
 
         for file_path in image_files:
             try:
-                # Calculate relative path for organization
-                relative_path = file_path.relative_to(input_path)
+                # Use LocalStorage to calculate relative path
+                relative_path = self.storage.get_relative_path(file_path, input_path)
 
                 # Create Image object
                 image = Image(
                     filename=file_path.name,
                     original_file_path=str(relative_path),
-                    file_hash=self._calculate_file_hash(file_path),
+                    file_hash=self.storage.calculate_file_hash(file_path),
                     status=ProcessingStatus.PENDING
                 )
 
@@ -142,11 +136,11 @@ class ImageProcessor:
                 # Construct full source path
                 source_path = input_path / image.original_file_path
 
-                # Optimize and save image
+                # Use LocalStorage to optimize and save image
                 optimized_path = self._optimize_and_save_image(source_path, image.original_file_path)
 
                 # Update image model
-                image.optimized_file_path = str(optimized_path.relative_to(self.output_folder))
+                image.optimized_file_path = str(self.storage.get_relative_path(optimized_path, self.output_folder))
                 image.status = ProcessingStatus.COMPLETED
 
                 processed_images_list.append(image)
@@ -163,136 +157,71 @@ class ImageProcessor:
 
         return processed_images_list
 
-    def _discover_images(self, folder_path: Path) -> List[Path]:
-        """Discover images using depth-first traversal maintaining original order."""
-        image_files = []
-
-        def scan_directory(current_path: Path):
-            try:
-                # Get all items and sort them as they appear in filesystem
-                items = sorted(current_path.iterdir(), key=lambda x: x.name)
-
-                # First, process files in current directory
-                for item in items:
-                    if item.is_file() and item.suffix.lower() in self.supported_formats:
-                        image_files.append(item)
-
-                # Then, recursively process subdirectories
-                for item in items:
-                    if item.is_dir():
-                        scan_directory(item)
-
-            except PermissionError:
-                print(f"Warning: No permission to access {current_path}")
-
-        scan_directory(folder_path)
-        return image_files
-
-    @staticmethod
-    def _calculate_file_hash(file_path: Path) -> str:
-        """Calculate SHA-256 hash of file."""
-        sha256_hash = hashlib.sha256()
-        with open(file_path, "rb") as f:
-            for chunk in iter(lambda: f.read(4096), b""):
-                sha256_hash.update(chunk)
-        return sha256_hash.hexdigest()
-
     def _optimize_and_save_image(self, source_path: Path, relative_path: str) -> Path:
-        """Optimize single image for OCR and save."""
-        # Always save as .jpg for consistency and optimal OCR processing
-        destination = self.output_folder / relative_path
-        if destination.suffix.lower() == '.png':
-            destination = destination.with_suffix('.jpg')
+        """Optimize single image for OCR and save using LocalStorage."""
+        # Use LocalStorage to create output path (force .jpg extension)
+        destination = self.storage.create_output_path(
+            str(self.output_folder),
+            relative_path,
+            force_extension='.jpg'
+        )
 
-        # Ensure destination directory exists
-        destination.parent.mkdir(parents=True, exist_ok=True)
-
-        # Skip if already exists
-        if destination.exists():
+        # Use LocalStorage to check if file already exists
+        if self.storage.file_exists(destination):
             print(f"    Skipped: Already exists")
             return destination
 
-        # Optimize and save
+        # Use LocalStorage to optimize and save
         self._ocr_optimize_and_save(source_path, destination)
         return destination
 
     def _ocr_optimize_and_save(self, source_path: Path, destination: Path):
-        """Optimize image specifically for OCR processing."""
-        start_time = time.time()
-        original_size = source_path.stat().st_size
-
+        """Optimize image specifically for OCR processing using LocalStorage."""
         try:
-            with PILImage.open(source_path) as img_obj:
-                # Convert to RGB first
-                if img_obj.mode in ('RGBA', 'P', 'LA'):
-                    # Create white background for transparent images (better for OCR)
-                    background = PILImage.new('RGB', img_obj.size, (255, 255, 255))
-                    if img_obj.mode == 'P':
-                        img_obj = img_obj.convert('RGBA')
-                    if 'transparency' in img_obj.info:
-                        background.paste(img_obj, mask=img_obj.split()[-1])
-                    else:
-                        background.paste(img_obj)
-                    img_obj = background
-                elif img_obj.mode != 'RGB':
-                    img_obj = img_obj.convert('RGB')
-
-                # Convert to grayscale if requested (can improve OCR for documents)
-                if self.settings.convert_to_grayscale:
-                    img_obj = img_obj.convert('L').convert('RGB')  # Convert back to RGB for JPEG
-
-                # Enhance contrast for better text recognition
-                if self.settings.enhance_contrast:
-                    enhancer = ImageEnhance.Contrast(img_obj)
-                    img_obj = enhancer.enhance(1.2)  # Slight contrast boost
-
-                # Resize for optimal OCR processing
+            # Get original image dimensions for reporting
+            with self.storage.open_image(source_path) as img_obj:
                 original_dimensions = img_obj.size
-                if max(img_obj.size) > self.settings.max_width:
-                    ratio = self.settings.max_width / max(img_obj.size)
-                    new_size = tuple(int(dim * ratio) for dim in img_obj.size)
-                    img_obj = img_obj.resize(new_size, PILImage.Resampling.LANCZOS)
 
-                # Save as optimized JPEG with high quality for text preservation
-                img_obj.save(destination, format='JPEG',
-                         quality=self.settings.jpeg_quality,
-                         optimize=True)
+            # Use LocalStorage to optimize image
+            original_size, optimized_size, processing_time = self.storage.optimize_image_for_ocr(
+                source_path=source_path,
+                destination=destination,
+                max_width=self.settings.max_width,
+                jpeg_quality=self.settings.jpeg_quality,
+                enhance_contrast=self.settings.enhance_contrast,
+                convert_to_grayscale=self.settings.convert_to_grayscale
+            )
 
-            # Report optimization results
-            optimized_size = destination.stat().st_size
-            original_mb = original_size / (1024 * 1024)
-            optimized_mb = optimized_size / (1024 * 1024)
-            compression_ratio = (1 - optimized_mb / original_mb) * 100 if original_mb > 0 else 0
-            processing_time = time.time() - start_time
+            # Get new dimensions for reporting
+            with self.storage.open_image(destination) as img_obj:
+                new_dimensions = img_obj.size
 
-            size_info = f"{original_mb:.1f}MB → {optimized_mb:.1f}MB"
-            if original_dimensions != img_obj.size:
-                size_info += f" (resized from {original_dimensions})"
-
+            # Prepare enhancement list for reporting
             enhancements = []
             if self.settings.enhance_contrast:
                 enhancements.append("contrast+")
             if self.settings.convert_to_grayscale:
                 enhancements.append("grayscale")
 
-            enhancement_info = f" [{', '.join(enhancements)}]" if enhancements else ""
-
-            print(f"    Optimized: {size_info} (-{compression_ratio:.0f}%){enhancement_info} "
-                  f"in {processing_time:.1f}s")
+            # Use LocalStorage to print optimization stats
+            self.storage.print_optimization_stats(
+                original_size=original_size,
+                optimized_size=optimized_size,
+                processing_time=processing_time,
+                original_dimensions=original_dimensions,
+                new_dimensions=new_dimensions,
+                enhancements=enhancements
+            )
 
         except Exception as e:
             print(f"    Warning: Could not optimize {source_path.name}, copying original: {e}")
-            self._simple_copy(source_path, destination)
+            # Use LocalStorage for fallback copy
+            self.storage.copy_file(source_path, destination)
 
-    @staticmethod
-    def _simple_copy(source_path: Path, destination: Path):
-        """Simple file copy fallback."""
-        original_size = source_path.stat().st_size
-        with open(source_path, 'rb') as src, open(destination, 'wb') as dst:
-            dst.write(src.read())
-
-        size_mb = original_size / (1024 * 1024)
-        print(f"    Copied: {size_mb:.1f}MB (no optimization)")
+            # Print simple copy stats
+            original_size = self.storage.get_file_size(source_path)
+            size_mb = self.storage.format_file_size(original_size)
+            print(f"    Copied: {size_mb} (no optimization)")
 
 
 # Example usage
