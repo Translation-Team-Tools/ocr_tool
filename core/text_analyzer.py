@@ -1,4 +1,5 @@
 import statistics
+from dataclasses import dataclass, field
 from typing import List, Dict, Tuple
 
 from google.cloud import vision
@@ -14,171 +15,89 @@ from data.models import Image
 # - word length <= 6
 # - width lowen than 80% (60%?) of median width
 
+"""
+ratio = paragraph_median / page_median
+
+# Main furigana detection
+if ratio > 0.8:
+    return False  # Too similar in size
+
+# Safety: difference must be meaningful relative to text size
+relative_diff = (page_median - paragraph_median) / page_median
+if relative_diff < 0.15:  # Less than 15% smaller
+    return False  # Probably just OCR variance
+
+# Safety: very small paragraphs
+if paragraph_char_count < 7:
+    return False
+"""
+
+@dataclass
+class _Symbol:
+    width: float
+    text: str
+
+@dataclass
+class _Paragraph:
+    symbols: List[_Symbol] = field(default_factory=list)
+    furigana: bool = True
+
 
 class TextAnalyzer:
     """Analyzes OCR results for furigana detection and confidence marking."""
 
     def analyze_images(self, images: List[Image]) -> None:
         """Analyze text from all images and return structured results."""
-        results = []
-
         for image in images:
             try:
-
-                analyzed = self._analyze_vision_response(image.vision_response)
-
-                results.append({
-                    'filename': image.filename,
-                    'regular_paragraphs': analyzed['regular_paragraphs'],
-                    'furigana_paragraphs': analyzed['furigana_paragraphs']
-                })
-
+                self._analyze_vision_response(image.vision_response)
                 print(f"    Analyzed: {image.filename}")
 
             except Exception as e:
                 print(f"    Skipping {image.filename}: Analysis error - {e}")
                 continue
 
-        return results
-
-    def _analyze_vision_response(self, vision_response: vision.AnnotateImageResponse) -> Dict:
+    def _analyze_vision_response(self, vision_response: vision.AnnotateImageResponse) -> Dict | None:
         """Analyze Vision API response for text extraction and furigana detection."""
         full_text_annotation = vision_response.full_text_annotation
 
         if not full_text_annotation or not full_text_annotation.pages:
-            return {'regular_paragraphs': [], 'furigana_paragraphs': []}
+            return None
+
+        paragraphs: List[_Paragraph] = []
 
         # Extract all paragraphs from Vision response
-        paragraphs = []
         for page in full_text_annotation.pages:
             for block in page.blocks:
-                paragraphs.extend(block.paragraphs)
+                for paragraph in block.paragraphs:
+                    par = _Paragraph()
+                    for word in paragraph.words:
+                        for symbol in word.symbols:
+                            width = self._calculate_width(symbol.bounding_box)
+                            par.symbols.append(_Symbol(width=width, text=symbol.text))
+                            if not self._is_furigana_char(symbol.text):
+                                par.furigana = False
+                    paragraphs.append(par)
+        return None
 
-        if not paragraphs:
-            return {'regular_paragraphs': [], 'furigana_paragraphs': []}
-
-        # Detect furigana using refined criteria
-        regular_paragraphs, furigana_paragraphs = self._detect_furigana_refined(paragraphs)
-
-        # Process text with confidence markers
-        processed_regular = [self._process_paragraph_text(p) for p in regular_paragraphs]
-        processed_furigana = [self._process_paragraph_text(p) for p in furigana_paragraphs]
-
-        # Filter out empty text
-        processed_regular = [text for text in processed_regular if text.strip()]
-        processed_furigana = [text for text in processed_furigana if text.strip()]
-
-        return {
-            'regular_paragraphs': processed_regular,
-            'furigana_paragraphs': processed_furigana
-        }
-
-    def _detect_furigana_refined(self, paragraphs: List) -> Tuple[List, List]:
-        """Refined furigana detection with stricter criteria."""
-        if not paragraphs:
-            return [], []
-
-        # Collect bounding box data for analysis
-        all_boxes = []
-        for paragraph in paragraphs:
-            if paragraph.bounding_box:
-                width = self._calculate_paragraph_width(paragraph.bounding_box)
-                height = self._calculate_paragraph_height(paragraph.bounding_box)
-                text_content = self._extract_plain_text(paragraph)
-
-                all_boxes.append({
-                    'paragraph': paragraph,
-                    'width': width,
-                    'height': height,
-                    'text': text_content
-                })
-
-        if not all_boxes:
-            return paragraphs, []
-
-        # Calculate size thresholds
-        widths = [box['width'] for box in all_boxes if box['width'] > 0]
-        heights = [box['height'] for box in all_boxes if box['height'] > 0]
-
-        if not widths or not heights:
-            return paragraphs, []
-
-        median_width = statistics.median(widths)
-        median_height = statistics.median(heights)
-        width_threshold = median_width * 0.5
-        height_threshold = median_height * 0.6
-
-        regular_paragraphs = []
-        furigana_paragraphs = []
-
-        for box in all_boxes:
-            paragraph = box['paragraph']
-            text = box['text']
-
-            # Strict furigana criteria - ALL must be met
-            is_furigana = (
-                    len(text) <= 5 and  # Very short text
-                    self._is_furigana_like_text(text) and  # Mostly hiragana, no kanji
-                    (box['width'] <= width_threshold or box['height'] <= height_threshold)  # Small size
-            )
-
-            if is_furigana and self._additional_furigana_score(box) >= 3:
-                furigana_paragraphs.append(paragraph)
-            else:
-                regular_paragraphs.append(paragraph)
-
-        return regular_paragraphs, furigana_paragraphs
-
-    def _additional_furigana_score(self, box: Dict) -> int:
-        """Calculate additional score for furigana classification."""
-        score = 0
-        text = box['text']
-
-        if len(text) <= 3:
-            score += 2
-        if self._is_all_hiragana(text):
-            score += 1
-        if box['width'] > 0 and box['height'] > 0:
-            ratio = box['width'] / box['height']
-            if ratio > 1.5:  # Wide ratio typical for furigana
-                score += 1
-
-        return score
-
-    def _is_furigana_like_text(self, text: str) -> bool:
-        """Check if text looks like furigana (mostly hiragana, no kanji)."""
-        if not text:
-            return False
-
-        hiragana_count = sum(1 for char in text if self._is_hiragana(char))
-        kanji_count = sum(1 for char in text if self._is_kanji(char))
-        japanese_count = sum(1 for char in text if self._is_japanese_char(char))
-
-        if japanese_count == 0:
-            return False
-
-        # Must be at least 80% hiragana and no kanji
-        return (hiragana_count / japanese_count) >= 0.8 and kanji_count == 0
-
-    def _is_all_hiragana(self, text: str) -> bool:
-        """Check if text is all hiragana characters."""
-        return all(self._is_hiragana(char) for char in text if self._is_japanese_char(char))
 
     def _is_hiragana(self, char: str) -> bool:
         """Check if character is hiragana."""
         return '\u3040' <= char <= '\u309F'
 
+    def _is_katakana(self, char: str) -> bool:
+        """Check if character is katakana."""
+        return '\u30A0' <= char <= '\u30FF'
+
     def _is_kanji(self, char: str) -> bool:
         """Check if character is kanji."""
         return '\u4E00' <= char <= '\u9FAF'
 
-    def _is_japanese_char(self, char: str) -> bool:
+    def _is_furigana_char(self, char: str) -> bool:
         """Check if character is Japanese."""
-        return (self._is_hiragana(char) or
-                '\u30A0' <= char <= '\u30FF' or  # Katakana
-                self._is_kanji(char))
+        return (self._is_hiragana(char) or self._is_katakana(char)) and not self._is_kanji(char)
 
-    def _calculate_paragraph_width(self, bounding_box) -> float:
+    def _calculate_width(self, bounding_box) -> float:
         """Calculate width of paragraph bounding box."""
         vertices = bounding_box.vertices
         if len(vertices) < 2:
@@ -188,7 +107,7 @@ class TextAnalyzer:
         except (IndexError, AttributeError):
             return 0
 
-    def _calculate_paragraph_height(self, bounding_box) -> float:
+    def _calculate_height(self, bounding_box) -> float:
         """Calculate height of paragraph bounding box."""
         vertices = bounding_box.vertices
         if len(vertices) < 4:
