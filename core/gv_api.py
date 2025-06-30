@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import List
 from google.cloud import vision
 from google.protobuf.json_format import MessageToDict
-from models.models import Image, ProcessingStatus
+from data.models import Image, ProcessingStatus
 
 
 class VisionProcessor:
@@ -11,14 +11,7 @@ class VisionProcessor:
 
     def __init__(self, credentials_path: str):
         self.credentials_path = credentials_path
-        self.result_folder = Path("result")
-        self.json_folder = self.result_folder / "gv_results"
-        self._ensure_folders()
         self._initialize_client()
-
-    def _ensure_folders(self):
-        """Create result folders if they don't exist."""
-        self.json_folder.mkdir(parents=True, exist_ok=True)
 
     def _initialize_client(self):
         """Initialize Google Vision API client."""
@@ -38,13 +31,9 @@ class VisionProcessor:
                     continue
 
                 # Process with Vision API
-                vision_response = self._call_vision_api(image.optimized_file_path)
-
-                # Save JSON response
-                json_path = self._save_response_as_json(vision_response, image.filename)
+                image.vision_response = self._call_vision_api(image.optimized_file_path)
 
                 # Update image model
-                image.vision_json_path = str(json_path)
                 image.status = ProcessingStatus.COMPLETED
 
                 processed_images.append(image)
@@ -59,12 +48,9 @@ class VisionProcessor:
 
         return processed_images
 
-    def _call_vision_api(self, image_path: str) -> vision.AnnotateImageResponse:
+    def _call_vision_api(self, image_content: bytes) -> vision.AnnotateImageResponse:
         """Call Google Vision API for single image."""
-        with open(image_path, 'rb') as image_file:
-            content = image_file.read()
-
-        image = vision.Image(content=content)
+        image = vision.Image(content=image_content)
         response = self.client.text_detection(image=image)
 
         # Check for API errors
@@ -73,17 +59,12 @@ class VisionProcessor:
 
         return response
 
-    def _save_response_as_json(self, response: vision.AnnotateImageResponse, filename: str) -> Path:
-        """Save Vision API response as JSON file."""
-        # Convert protobuf response to dict
-        response_dict = MessageToDict(response._pb)
+    @staticmethod
+    def get_dict(vision_response: vision.AnnotateImageResponse) -> dict:
+        return MessageToDict(vision_response._pb)
 
-        # Create JSON filename based on original filename
-        json_filename = f"{filename}.json"
-        json_path = self.json_folder / json_filename
-
-        # Save as JSON
-        with open(json_path, 'w', encoding='utf-8') as f:
-            json.dump(response_dict, f, ensure_ascii=False, indent=2)
-
-        return json_path
+# # Save as JSON
+# with open(json_path, 'w', encoding='utf-8') as f:
+#     json.dump(response_dict, f, ensure_ascii=False, indent=2)
+#
+# return json_path
