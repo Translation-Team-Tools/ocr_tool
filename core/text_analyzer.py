@@ -3,7 +3,7 @@ from typing import List, Dict, Tuple
 
 from google.cloud import vision
 
-from config.config import CONFIDENCE_THRESHOLDS, CONFIDENCE_MARKERS
+from config.config import Confidence
 from data.models import Image
 
 
@@ -221,22 +221,18 @@ class TextAnalyzer:
                     confidence = 1.0
 
                 # Apply confidence markers
-                confidence_level = self._get_confidence_level(confidence)
-                if confidence_level in CONFIDENCE_MARKERS:
-                    marker = CONFIDENCE_MARKERS[confidence_level]
+                confidence_level: Confidence = self._get_confidence_level(confidence)
+                if confidence_level is not None:
+                    marker = confidence_level.value.marker
                     text = f"{marker}{text}{marker}"
 
                 text_parts.append(text)
 
         return ''.join(text_parts)
 
-    def _get_confidence_level(self, confidence: float) -> str:
+    def _get_confidence_level(self, confidence: float) -> Confidence.value:
         """Classify confidence level."""
-        if confidence >= CONFIDENCE_THRESHOLDS['high']:
-            return 'high'
-        elif confidence >= CONFIDENCE_THRESHOLDS['medium']:
-            return 'medium'
-        elif confidence >= CONFIDENCE_THRESHOLDS['low']:
-            return 'low'
-        else:
-            return 'very_low'
+        for confidence_level in Confidence:
+            if confidence >= confidence_level.value.threshold:
+                return confidence_level
+        return None
