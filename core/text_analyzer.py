@@ -1,45 +1,31 @@
-import json
 import statistics
-from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple
+
 from google.cloud import vision
-from google.protobuf.json_format import ParseDict
-from models.models import Image, ProcessingStatus
+
+from config.config import CONFIDENCE_THRESHOLDS, CONFIDENCE_MARKERS
+from data.models import Image
+
+
+# Parameters to analyze
+# - is all japanese characters
+# - zero kanji
+# - is kana amount > 90%
+# - word length <= 6
+# - width lowen than 80% (60%?) of median width
 
 
 class TextAnalyzer:
     """Analyzes OCR results for furigana detection and confidence marking."""
 
-    def __init__(self):
-        self.confidence_thresholds = {
-            'high': 0.90,
-            'medium': 0.80,
-            'low': 0.60
-        }
-        self.confidence_markers = {
-            'medium': '[?]',
-            'low': '[??]',
-            'very_low': '[???]'
-        }
-
-    def analyze_images(self, images: List[Image]) -> List[Dict]:
+    def analyze_images(self, images: List[Image]) -> None:
         """Analyze text from all images and return structured results."""
         results = []
 
         for image in images:
             try:
-                # Skip if no vision JSON path or failed status
-                if not image.vision_json_path or image.status == ProcessingStatus.FAILED:
-                    print(f"    Skipping {image.filename}: No OCR data available")
-                    continue
 
-                # Load and analyze vision response
-                vision_response = self._load_vision_response(image.vision_json_path)
-                if not vision_response:
-                    print(f"    Skipping {image.filename}: Failed to load JSON")
-                    continue
-
-                analyzed = self._analyze_vision_response(vision_response)
+                analyzed = self._analyze_vision_response(image.vision_response)
 
                 results.append({
                     'filename': image.filename,
@@ -54,25 +40,6 @@ class TextAnalyzer:
                 continue
 
         return results
-
-    def _load_vision_response(self, json_path: str) -> Optional[vision.AnnotateImageResponse]:
-        """Load Vision API response from JSON file."""
-        try:
-            json_file = Path(json_path)
-            if not json_file.exists():
-                print(f"      JSON file not found: {json_path}")
-                return None
-
-            with open(json_file, 'r', encoding='utf-8') as f:
-                response_dict = json.load(f)
-
-            # Convert dict back to Vision protobuf object
-            response_pb = ParseDict(response_dict, vision.AnnotateImageResponse()._pb)
-            return vision.AnnotateImageResponse(response_pb)
-
-        except Exception as e:
-            print(f"      Failed to load JSON {json_path}: {e}")
-            return None
 
     def _analyze_vision_response(self, vision_response: vision.AnnotateImageResponse) -> Dict:
         """Analyze Vision API response for text extraction and furigana detection."""
@@ -255,8 +222,8 @@ class TextAnalyzer:
 
                 # Apply confidence markers
                 confidence_level = self._get_confidence_level(confidence)
-                if confidence_level in self.confidence_markers:
-                    marker = self.confidence_markers[confidence_level]
+                if confidence_level in CONFIDENCE_MARKERS:
+                    marker = CONFIDENCE_MARKERS[confidence_level]
                     text = f"{marker}{text}{marker}"
 
                 text_parts.append(text)
@@ -265,11 +232,11 @@ class TextAnalyzer:
 
     def _get_confidence_level(self, confidence: float) -> str:
         """Classify confidence level."""
-        if confidence >= self.confidence_thresholds['high']:
+        if confidence >= CONFIDENCE_THRESHOLDS['high']:
             return 'high'
-        elif confidence >= self.confidence_thresholds['medium']:
+        elif confidence >= CONFIDENCE_THRESHOLDS['medium']:
             return 'medium'
-        elif confidence >= self.confidence_thresholds['low']:
+        elif confidence >= CONFIDENCE_THRESHOLDS['low']:
             return 'low'
         else:
             return 'very_low'
