@@ -1,6 +1,6 @@
 import statistics
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple
+from typing import List, Dict
 
 from google.cloud import vision
 
@@ -34,37 +34,43 @@ if paragraph_char_count < 7:
 
 @dataclass
 class _Symbol:
-    width: float
+    confidence: Confidence
     text: str
 
 @dataclass
-class _Paragraph:
+class _Word:
     symbols: List[_Symbol] = field(default_factory=list)
+
+@dataclass
+class _Paragraph:
+    words: List[_Word] = field(default_factory=list)
     furigana: bool = True
+    widths: List[float] = field(default_factory=list)
 
 
 class TextAnalyzer:
     """Analyzes OCR results for furigana detection and confidence marking."""
 
+    def __init__(self):
+        self.paragraphs: List[_Paragraph] = []
+
     def analyze_images(self, images: List[Image]) -> None:
         """Analyze text from all images and return structured results."""
         for image in images:
             try:
-                self._analyze_vision_response(image.vision_response)
+                self._analyze_full_text_annotation(image.vision_response)
                 print(f"    Analyzed: {image.filename}")
 
             except Exception as e:
                 print(f"    Skipping {image.filename}: Analysis error - {e}")
                 continue
 
-    def _analyze_vision_response(self, vision_response: vision.AnnotateImageResponse) -> Dict | None:
+    def _analyze_full_text_annotation(self, vision_response: vision.AnnotateImageResponse) -> Dict | None:
         """Analyze Vision API response for text extraction and furigana detection."""
         full_text_annotation = vision_response.full_text_annotation
 
         if not full_text_annotation or not full_text_annotation.pages:
             return None
-
-        paragraphs: List[_Paragraph] = []
 
         # Extract all paragraphs from Vision response
         for page in full_text_annotation.pages:
@@ -72,32 +78,41 @@ class TextAnalyzer:
                 for paragraph in block.paragraphs:
                     par = _Paragraph()
                     for word in paragraph.words:
+                        wrd = _Word()
                         for symbol in word.symbols:
-                            width = self._calculate_width(symbol.bounding_box)
-                            par.symbols.append(_Symbol(width=width, text=symbol.text))
-                            if not self._is_furigana_char(symbol.text):
+                            width = AnalyzerUtils.calculate_width(symbol.bounding_box)
+                            par.widths.append(width)
+                            confidence = AnalyzerUtils.get_confidence_level(confidence=symbol.confidence)
+                            wrd.symbols.append(_Symbol(confidence=confidence, text=symbol.text))
+                            if not AnalyzerUtils.is_furigana_char(symbol.text):
                                 par.furigana = False
-                    paragraphs.append(par)
+                        par.words.append(wrd)
+                    self.paragraphs.append(par)
         return None
 
-
-    def _is_hiragana(self, char: str) -> bool:
+class AnalyzerUtils:
+    @staticmethod
+    def _is_hiragana(char: str) -> bool:
         """Check if character is hiragana."""
         return '\u3040' <= char <= '\u309F'
 
-    def _is_katakana(self, char: str) -> bool:
+    @staticmethod
+    def _is_katakana(char: str) -> bool:
         """Check if character is katakana."""
         return '\u30A0' <= char <= '\u30FF'
 
-    def _is_kanji(self, char: str) -> bool:
+    @staticmethod
+    def _is_kanji(char: str) -> bool:
         """Check if character is kanji."""
         return '\u4E00' <= char <= '\u9FAF'
 
-    def _is_furigana_char(self, char: str) -> bool:
+    @staticmethod
+    def is_furigana_char(char: str) -> bool:
         """Check if character is Japanese."""
-        return (self._is_hiragana(char) or self._is_katakana(char)) and not self._is_kanji(char)
+        return (AnalyzerUtils._is_hiragana(char) or AnalyzerUtils._is_katakana(char)) and not AnalyzerUtils._is_kanji(char)
 
-    def _calculate_width(self, bounding_box) -> float:
+    @staticmethod
+    def calculate_width(bounding_box) -> float:
         """Calculate width of paragraph bounding box."""
         vertices = bounding_box.vertices
         if len(vertices) < 2:
@@ -107,7 +122,8 @@ class TextAnalyzer:
         except (IndexError, AttributeError):
             return 0
 
-    def _calculate_height(self, bounding_box) -> float:
+    @staticmethod
+    def calculate_height(bounding_box) -> float:
         """Calculate height of paragraph bounding box."""
         vertices = bounding_box.vertices
         if len(vertices) < 4:
@@ -117,39 +133,8 @@ class TextAnalyzer:
         except (IndexError, AttributeError):
             return 0
 
-    def _extract_plain_text(self, paragraph) -> str:
-        """Extract plain text from paragraph."""
-        text_parts = []
-        for word in paragraph.words:
-            for symbol in word.symbols:
-                text_parts.append(symbol.text)
-        return ''.join(text_parts)
-
-    def _process_paragraph_text(self, paragraph) -> str:
-        """Extract text from paragraph with confidence markers."""
-        text_parts = []
-
-        for word in paragraph.words:
-            for symbol in word.symbols:
-                text = symbol.text
-                confidence = getattr(symbol, 'confidence', 1.0)
-
-                try:
-                    confidence = float(confidence) if confidence is not None else 1.0
-                except (ValueError, TypeError):
-                    confidence = 1.0
-
-                # Apply confidence markers
-                confidence_level: Confidence = self._get_confidence_level(confidence)
-                if confidence_level is not None:
-                    marker = confidence_level.value.marker
-                    text = f"{marker}{text}{marker}"
-
-                text_parts.append(text)
-
-        return ''.join(text_parts)
-
-    def _get_confidence_level(self, confidence: float) -> Confidence.value:
+    @staticmethod
+    def get_confidence_level(confidence: float) -> Confidence.value:
         """Classify confidence level."""
         for confidence_level in Confidence:
             if confidence >= confidence_level.value.threshold:
