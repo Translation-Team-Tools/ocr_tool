@@ -6,69 +6,32 @@ from typing import List, Dict
 class OutputGenerator:
     """Generates formatted text output from analyzed OCR results."""
 
-    def __init__(self, output_folder: str = "result"):
-        self.output_folder = Path(output_folder)
-        self.output_file = self.output_folder / "ocr_output.txt"
-
-    def generate_output(self, analyzed_results: List[Dict]) -> None:
-        """Generate formatted text output file from analyzed results."""
-        if not analyzed_results:
-            print("No results to generate output")
-            return
-
-        # Ensure output folder exists
-        self.output_folder.mkdir(parents=True, exist_ok=True)
-
-        # Generate content
-        content = self._build_output_content(analyzed_results)
-
-        # Write to file
-        with open(self.output_file, 'w', encoding='utf-8') as f:
-            f.write(content)
-
-        print(f"Output written to: {self.output_file}")
-        print(f"Total images in output: {len(analyzed_results)}")
-
-    def _build_output_content(self, analyzed_results: List[Dict]) -> str:
-        """Build the complete output content."""
-        lines = []
-
-        # Header
-        lines.extend(self._build_header(analyzed_results))
-        lines.append("")
-
-        # Per-image sections
-        for result in analyzed_results:
-            lines.extend(self._build_image_section(result))
-            lines.append("")
-
-        return "\n".join(lines)
-
-    def _build_header(self, analyzed_results: List[Dict]) -> List[str]:
+    def _build_header(self, total_images:int) -> str:
         """Build the header section."""
         header_lines = [
             "=== Japanese OCR Results ===",
-            f"Total Images Processed: {len(analyzed_results)}",
+            f"Total Images Processed: {total_images}",
             f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "Confidence Markers: [?] = medium confidence, [??] = low confidence, [???] = very low confidence"
         ]
-        return header_lines
+        return "\n".join(header_lines)
 
-    def _build_image_section(self, result: Dict) -> List[str]:
+    def build_image_section(self, lines: List[str], filename:str) -> str:
         """Build the section for a single image."""
-        lines = []
+        lines.insert(0, f"=== Image: {filename} ===")
 
-        # Image header
-        lines.append(f"=== Image: {result['filename']} ===")
+        return "\n".join(lines)
 
-        # Regular text section
-        if result['regular_paragraphs']:
-            for paragraph in result['regular_paragraphs']:
-                lines.append(f"[REGULAR] {paragraph}")
+    def build_final_result(self, image_sections: List[str]):
+        result = self._build_header(total_images=len(image_sections)) +"\n"
 
-        # Furigana text section
-        if result['furigana_paragraphs']:
-            for paragraph in result['furigana_paragraphs']:
-                lines.append(f"[FURIGANA] {paragraph}")
+        for img_section in image_sections:
+            result+= f"\n\n{img_section}\n\n"
 
-        return lines
+        return result
+
+    def mark_char(self, text:str, marker:str):
+        return f"{marker}{text}{marker}"
+
+    def build_line(self, text:str, is_furigana:bool):
+        return f"{'[FURIGANA]' if is_furigana else '[REGULAR]'} {text}"

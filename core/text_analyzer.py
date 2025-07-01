@@ -2,9 +2,11 @@ import statistics
 from dataclasses import dataclass, field
 from typing import List, Dict
 
+from docutils.nodes import paragraph
 from google.cloud import vision
 
 from config.config import Confidence
+from core.output_generator import OutputGenerator
 from data.models import Image
 
 
@@ -44,7 +46,7 @@ class _Word:
 @dataclass
 class _Paragraph:
     words: List[_Word] = field(default_factory=list)
-    furigana: bool = True
+    furigana_chars: bool = True
     widths: List[float] = field(default_factory=list)
 
 
@@ -52,25 +54,34 @@ class TextAnalyzer:
     """Analyzes OCR results for furigana detection and confidence marking."""
 
     def __init__(self):
-        self.paragraphs: List[_Paragraph] = []
+        self.output_generator = OutputGenerator()
 
     def analyze_images(self, images: List[Image]) -> None:
         """Analyze text from all images and return structured results."""
+        image_sections: List[str] = []
+
         for image in images:
             try:
-                self._analyze_full_text_annotation(image.vision_response)
+                paragraphs = self._analyze_full_text_annotation(image.vision_response)
+                section = self._build_output(paragraphs)
+
+                image_sections.append(self.output_generator.build_image_section(lines=section, filename=image.filename))
                 print(f"    Analyzed: {image.filename}")
 
             except Exception as e:
                 print(f"    Skipping {image.filename}: Analysis error - {e}")
                 continue
 
-    def _analyze_full_text_annotation(self, vision_response: vision.AnnotateImageResponse) -> Dict | None:
+        self.output_generator.build_final_result()
+
+    def _analyze_full_text_annotation(self, vision_response: vision.AnnotateImageResponse) -> List[_Paragraph] | None:
         """Analyze Vision API response for text extraction and furigana detection."""
         full_text_annotation = vision_response.full_text_annotation
 
         if not full_text_annotation or not full_text_annotation.pages:
             return None
+
+        paragraphs: List[_Paragraph] = []
 
         # Extract all paragraphs from Vision response
         for page in full_text_annotation.pages:
@@ -85,10 +96,40 @@ class TextAnalyzer:
                             confidence = AnalyzerUtils.get_confidence_level(confidence=symbol.confidence)
                             wrd.symbols.append(_Symbol(confidence=confidence, text=symbol.text))
                             if not AnalyzerUtils.is_furigana_char(symbol.text):
-                                par.furigana = False
+                                par.furigana_chars = False
                         par.words.append(wrd)
-                    self.paragraphs.append(par)
-        return None
+                    paragraphs.append(par)
+        return paragraphs
+
+    def _build_output(self, paragraphs: List[_Paragraph]) -> List[str]:
+        page_median = statistics.median([width for paragraph in paragraphs for width in paragraph.widths])
+
+        lines: List[str] = []
+
+        for paragraph in paragraphs:
+            paragraph_median = statistics.median(paragraph.widths)
+            ratio = paragraph_median / page_median
+            furigana = ratio < 0.8 and paragraph.furigana_chars and not any(len(word.symbols) > 6 for word in paragraph.words)
+
+            par_text = ""
+
+            for word in paragraph.words:
+                wrd_text = ""
+                for char in word.symbols:
+                    char.text = self.output_generator.mark_char(text=char.text, marker=char.confidence.value.marker)
+                    wrd_text += char.text
+
+                if furigana:
+                    wrd_text = f' {wrd_text} '
+
+                par_text += wrd_text
+
+            par_text = self.output_generator.build_line(text=par_text, is_furigana=furigana)
+
+            lines.append(par_text)
+        return lines
+
+
 
 class AnalyzerUtils:
     @staticmethod
