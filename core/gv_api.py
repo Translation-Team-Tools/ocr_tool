@@ -1,8 +1,8 @@
-import json
-from pathlib import Path
 from typing import List
+
 from google.cloud import vision
 from google.protobuf.json_format import MessageToDict
+
 from data.models import Image, ProcessingStatus
 
 

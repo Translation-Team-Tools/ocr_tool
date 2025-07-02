@@ -1,14 +1,12 @@
 import statistics
 from dataclasses import dataclass, field
-from typing import List, Dict
+from typing import List
 
-from docutils.nodes import paragraph
 from google.cloud import vision
 
 from config.config import Confidence
 from core.output_generator import OutputGenerator
 from data.models import Image
-
 
 # Parameters to analyze
 # - is all japanese characters

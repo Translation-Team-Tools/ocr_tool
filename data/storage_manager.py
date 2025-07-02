@@ -1,10 +1,10 @@
-from pathlib import Path
-from typing import List, Optional, Tuple
 from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
 
-from data.models import Image, ProcessingStatus
 from data.database import Database
 from data.local_storage import LocalStorage
+from data.models import Image, ProcessingStatus
 
 
 class StorageManager:

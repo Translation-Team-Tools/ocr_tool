@@ -1,7 +1,8 @@
 import hashlib
 import time
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple
+
 from PIL import Image as PILImage, ImageEnhance
 
 supported_formats = {'.jpg', '.jpeg', '.png'}
