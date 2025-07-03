@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="main-container">
+        <div class="header">
+            <h1>{{ title }}</h1>
+        </div>
+
+        {% for result in results %}
+        <div class="result-section">
+            {% if result.title %}
+            <div class="result-title">{{ result.title }}</div>
+            {% endif %}
+
+            {% for line in result.lines %}
+            <div class="{% if line.is_furigana %}furigana-line{% else %}text-line{% endif %}">
+                {% for char_data in line.characters %}
+                <span class="char {{ char_data.confidence }}"
+                      data-confidence="{{ char_data.confidence }}">{{ char_data.char }}</span>
+                {% endfor %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endfor %}
+
+        <div class="legend">
+            <div class="legend-section">
+                <h3>Character Confidence Levels</h3>
+                <div class="legend-item">
+                    <span class="legend-sample char high">あ</span>
+                    <strong>High:</strong> No marking
+                </div>
+                <div class="legend-item">
+                    <span class="legend-sample char medium">あ</span>
+                    <strong>Medium:</strong> Light yellow background
+                </div>
+                <div class="legend-item">
+                    <span class="legend-sample char low">あ</span>
+                    <strong>Low:</strong> Orange background
+                </div>
+                <div class="legend-item">
+                    <span class="legend-sample char very_low">あ</span>
+                    <strong>Very Low:</strong> Red background
+                </div>
+            </div>
+
+            <div class="legend-section">
+                <h3>Line Types</h3>
+                <div class="legend-item">
+                    <span style="border-left: 4px solid #2196F3; padding-left: 8px;">Regular Text</span>
+                </div>
+                <div class="legend-item">
+                    <span style="border-left: 4px solid #FF9800; padding-left: 8px; font-style: italic; color: #666; background-color: #fff8e1;">Furigana</span>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
