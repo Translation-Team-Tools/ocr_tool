@@ -70,7 +70,7 @@ class TextAnalyzer:
                 print(f"    Skipping {image.filename}: Analysis error - {e}")
                 continue
 
-        self.output_generator.build_final_result()
+        self.output_generator.build_final_result(image_sections=image_sections)
 
     def _analyze_full_text_annotation(self, vision_response: vision.AnnotateImageResponse) -> List[_Paragraph] | None:
         """Analyze Vision API response for text extraction and furigana detection."""
