@@ -18,6 +18,7 @@ class ProcessingStatus(Enum):
 
 class Image(Base):
     __tablename__ = 'images'
+    __allow_unmapped__ = True
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     original_file_path = Column(String(512), nullable=False)
