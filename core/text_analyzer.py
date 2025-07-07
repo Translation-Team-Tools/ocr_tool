@@ -173,7 +173,7 @@ class AnalyzerUtils:
             return 0
 
     @staticmethod
-    def get_confidence_level(confidence: float) -> Confidence.value:
+    def get_confidence_level(confidence: float) -> Confidence:
         """Classify confidence level."""
         for confidence_level in Confidence:
             if confidence >= confidence_level.value.threshold:
