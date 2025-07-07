@@ -5,7 +5,7 @@ from typing import List
 from google.cloud import vision
 
 from config.config import Confidence
-from core.output_generator import OutputGenerator
+from output_generation.output_generator import OutputGenerator
 from data.models import Image
 
 # Parameters to analyze
