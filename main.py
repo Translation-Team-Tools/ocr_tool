@@ -122,66 +122,6 @@ class OCRWorkflow:
         else:
             return "No images were successfully processed."
 
-    """Main OCR workflow orchestrator"""
-
-    def __init__(self, input_folder: str, credentials_path: str):
-        self.input_folder = input_folder
-        self.credentials_path = credentials_path
-        self.result_folder = project_root / "result"
-        self.result_folder.mkdir(exist_ok=True)
-
-    def run_workflow(self) -> bool:
-        """Execute the complete OCR workflow"""
-        try:
-            print("Starting OCR processing workflow...")
-
-            # Step 1: Create image objects using ImageWorkflowManager
-            print("Step 1: Creating and optimizing image objects...")
-            image_objects = ImageWorkflowManager.process_images_workflow(self.input_folder)
-
-            if not image_objects:
-                print("No image objects created. Exiting.")
-                return False
-
-            print(f"Created and optimized {len(image_objects)} image objects")
-
-            # Step 2: Send to Google Cloud Vision API via VisionProcessor
-            print("Step 2: Processing images with Google Cloud Vision API...")
-            vision_processor = VisionProcessor(self.credentials_path)
-            processed_images = vision_processor.process_images(image_objects)
-
-            # Filter successfully processed images
-            successful_images = [img for img in processed_images if img.vision_response is not None]
-            print(f"Successfully processed {len(successful_images)} images through Google Vision API")
-
-            if not successful_images:
-                print("No images were successfully processed by Vision API. Exiting.")
-                return False
-
-            # Step 3: Generate output string via TextAnalyzer (modified to return result)
-            print("Step 3: Analyzing and generating output string...")
-            output_string = self._analyze_and_generate_output(successful_images)
-
-            if not output_string:
-                print("No output string generated. Exiting.")
-                return False
-
-            # Step 4: Write to .txt file in result folder
-            print("Step 4: Writing results to file...")
-            output_filename = self._generate_output_filename()
-            output_path = self.result_folder / output_filename
-
-            with open(output_path, 'w', encoding='utf-8') as f:
-                f.write(output_string)
-
-            print(f"Results written to: {output_path}")
-            print("OCR processing workflow completed successfully!")
-            return True
-
-        except Exception as e:
-            print(f"Error during OCR workflow: {str(e)}")
-            return False
-
     def _analyze_and_generate_output(self, images: List[Image]) -> str:
         """
         Modified text analysis that returns the output string.
