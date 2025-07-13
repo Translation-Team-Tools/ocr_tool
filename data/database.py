@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import create_engine, or_
 from sqlalchemy.orm import sessionmaker
 
-from data.models import Base, Image, ProcessingStatus
+from data.models import Base, ImageModel, ProcessingStatus
 
 
 class Database:
@@ -63,15 +63,15 @@ class Database:
         finally:
             session.close()
 
-    def add_image(self, image: Image) -> Image:
+    def add_image(self, image: ImageModel) -> ImageModel:
         """
-        Add an existing Image object to database.
+        Add an existing ImageModel object to database.
 
         Args:
-            image: Image object to add
+            image: ImageModel object to add
 
         Returns:
-            Added Image object with ID assigned
+            Added ImageModel object with ID assigned
         """
         with self.get_session() as session:
             session.add(image)
@@ -80,34 +80,34 @@ class Database:
             session.expunge(image)
             return image
 
-    def get_image_by_id(self, image_id: int) -> Optional[Image]:
+    def get_image_by_id(self, image_id: int) -> Optional[ImageModel]:
         """Get image by ID."""
         with self.get_session() as session:
-            img = session.query(Image).filter(Image.id == image_id).first()
+            img = session.query(ImageModel).filter(ImageModel.id == image_id).first()
             if img:
                 session.expunge(img)
             return img
 
-    def get_image_by_hash(self, file_hash: str) -> Optional[Image]:
+    def get_image_by_hash(self, file_hash: str) -> Optional[ImageModel]:
         """Get image by file hash."""
         with self.get_session() as session:
-            img = session.query(Image).filter(Image.file_hash == file_hash).first()
+            img = session.query(ImageModel).filter(ImageModel.file_hash == file_hash).first()
             if img:
                 session.expunge(img)
             return img
 
-    def get_image_by_filename(self, filename: str) -> Optional[Image]:
+    def get_image_by_filename(self, filename: str) -> Optional[ImageModel]:
         """Get image by filename."""
         with self.get_session() as session:
-            img = session.query(Image).filter(Image.filename == filename).first()
+            img = session.query(ImageModel).filter(ImageModel.filename == filename).first()
             if img:
                 session.expunge(img)
             return img
 
-    def get_images_by_status(self, status: ProcessingStatus) -> List[Image]:
+    def get_images_by_status(self, status: ProcessingStatus) -> List[ImageModel]:
         """Get images by processing status."""
         with self.get_session() as session:
-            images = session.query(Image).filter(Image.status == status).all()
+            images = session.query(ImageModel).filter(ImageModel.status == status).all()
             for img in images:
                 session.expunge(img)
             return images
@@ -119,23 +119,23 @@ class Database:
         if status: return self.get_images_by_status(status=status)
         return False
 
-    def get_all_images(self) -> List[Image]:
+    def get_all_images(self) -> List[ImageModel]:
         """Get all images."""
         with self.get_session() as session:
-            images = session.query(Image).all()
+            images = session.query(ImageModel).all()
             for img in images:
                 session.expunge(img)
             return images
 
-    def update_image(self, image: Image) -> Image:
+    def update_image(self, image: ImageModel) -> ImageModel:
         """
         Update existing image in database.
 
         Args:
-            image: Image object with updated data
+            image: ImageModel object with updated data
 
         Returns:
-            Updated Image object
+            Updated ImageModel object
         """
         with self.get_session() as session:
             merged_image = session.merge(image)  # Assign the merged instance
@@ -155,13 +155,13 @@ class Database:
             True if deleted, False if not found
         """
         with self.get_session() as session:
-            img = session.query(Image).filter(Image.id == image_id).first()
+            img = session.query(ImageModel).filter(ImageModel.id == image_id).first()
             if not img:
                 return False
             session.delete(img)
             return True
 
-    def search_images(self, search_term: str) -> List[Image]:
+    def search_images(self, search_term: str) -> List[ImageModel]:
         """
         Search images by filename or path.
 
@@ -169,13 +169,13 @@ class Database:
             search_term: Term to search for
 
         Returns:
-            List of matching Image objects
+            List of matching ImageModel objects
         """
         with self.get_session() as session:
-            images = session.query(Image).filter(
+            images = session.query(ImageModel).filter(
                 or_(
-                    Image.filename.like(f"%{search_term}%"),
-                    Image.original_file_path.like(f"%{search_term}%")
+                    ImageModel.filename.like(f"%{search_term}%"),
+                    ImageModel.original_file_path.like(f"%{search_term}%")
                 )
             ).all()
             for img in images:
@@ -193,8 +193,8 @@ if __name__ == "__main__":
     # Initialize database
     db = Database("/path/to/your/image/folder")
 
-    # Create Image object yourself
-    image = Image(
+    # Create ImageModel object yourself
+    image = ImageModel(
         original_file_path="/path/to/original.jpg",
         optimized_file_path="/path/to/optimized.jpg",
         filename="image.jpg",

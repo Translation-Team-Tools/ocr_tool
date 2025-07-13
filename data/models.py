@@ -16,22 +16,25 @@ class ProcessingStatus(Enum):
     SKIPPED = "skipped"
 
 
-class Image(Base):
-    image_bytes: bytes
-    vision_response: AnnotateImageResponse
-    analysis_results: List[str]
+class Image:
+    def __init__(self):
+        self.image_bytes: bytes = None
+        self.vision_response: AnnotateImageResponse = None
+        self.analysis_results: List[str] = None
 
-class ImageModel:
+
+class ImageModel(Base):
+    """Database model for image metadata"""
     __tablename__ = 'images'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     original_file_path = Column(String(512), nullable=False)
-    optimized_file_path = Column(String(512), nullable=False)
+    optimized_file_path = Column(String(512), nullable=True, default="")
     filename = Column(String(255), nullable=False)
     file_hash = Column(String(128), nullable=False)
-    vision_json_path = Column(String(512), nullable=False, default="")
+    vision_json_path = Column(String(512), nullable=True, default="")
     processed_at = Column(DateTime, nullable=True)
     status = Column(SQLEnum(ProcessingStatus), nullable=False, default=ProcessingStatus.PENDING)
 
     def __repr__(self):
-        return f"<Image(id={self.id}, filename='{self.filename}', status='{self.status.value}')>"
+        return f"<ImageModel(id={self.id}, filename='{self.filename}', status='{self.status.value}')>"
