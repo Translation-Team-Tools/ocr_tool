@@ -1,9 +1,6 @@
 import hashlib
-import time
-from io import BytesIO
-from typing import List, Tuple
+from typing import List
 
-from PIL import Image as PILImage, ImageEnhance
 from fs import open_fs
 
 supported_formats = {'.jpg', '.jpeg', '.png'}
@@ -122,106 +119,30 @@ class LocalStorage:
 
         return sha256_hash.hexdigest()
 
-    def save_optimized_image(self, image: PILImage.Image, destination: str,
-                             quality: int = 90) -> Tuple[int, int, float]:
+    def read_file_bytes(self, path: str) -> bytes:
         """
-        Save optimized image and return processing stats.
+        Read file as bytes.
 
         Args:
-            image: PIL Image object to save
-            destination: Destination path relative to base path
-            quality: JPEG quality (1-100)
+            path: File path relative to base path
 
         Returns:
-            Tuple of (original_size, optimized_size, processing_time)
+            File contents as bytes
         """
-        start_time = time.time()
+        with self.fs.open(path, 'rb') as f:
+            return f.read()
 
-        # Ensure destination directory exists
-        self.ensure_directory_exists(destination)
-
-        # Save as optimized JPEG
-        with self.fs.open(destination, 'wb') as f:
-            image.save(f, format='JPEG', quality=quality, optimize=True)
-
-        processing_time = time.time() - start_time
-        optimized_size = self.get_file_size(destination)
-
-        return 0, optimized_size, processing_time
-
-    def optimize_image_for_ocr(self, source_path: str, destination: str,
-                               max_width: int = 2048, jpeg_quality: int = 90,
-                               enhance_contrast: bool = True,
-                               convert_to_grayscale: bool = False) -> Tuple[int, int, float]:
+    def write_file_bytes(self, path: str, data: bytes) -> None:
         """
-        Complete image optimization pipeline for OCR.
+        Write bytes to file.
 
         Args:
-            source_path: Source image path relative to base path
-            destination: Destination path relative to base path
-            max_width: Maximum width for resizing
-            jpeg_quality: JPEG quality setting
-            enhance_contrast: Whether to enhance contrast
-            convert_to_grayscale: Whether to convert to grayscale
-
-        Returns:
-            Tuple of (original_size, optimized_size, processing_time)
+            path: File path relative to base path
+            data: Bytes to write
         """
-        start_time = time.time()
-        original_size = self.get_file_size(source_path)
-
-        try:
-            # Read image data
-            with self.fs.open(source_path, 'rb') as f:
-                img_obj = PILImage.open(BytesIO(f.read()))
-
-                # Convert to RGB first
-                if img_obj.mode in ('RGBA', 'P', 'LA'):
-                    # Create white background for transparent images
-                    background = PILImage.new('RGB', img_obj.size, (255, 255, 255))
-                    if img_obj.mode == 'P':
-                        img_obj = img_obj.convert('RGBA')
-                    if 'transparency' in img_obj.info:
-                        background.paste(img_obj, mask=img_obj.split()[-1])
-                    else:
-                        background.paste(img_obj)
-                    img_obj = background
-                elif img_obj.mode != 'RGB':
-                    img_obj = img_obj.convert('RGB')
-
-                # Convert to grayscale if requested
-                if convert_to_grayscale:
-                    img_obj = img_obj.convert('L').convert('RGB')
-
-                # Enhance contrast for better text recognition
-                if enhance_contrast:
-                    enhancer = ImageEnhance.Contrast(img_obj)
-                    img_obj = enhancer.enhance(1.2)
-
-                # Resize for optimal OCR processing
-                if max(img_obj.size) > max_width:
-                    ratio = max_width / max(img_obj.size)
-                    new_size = tuple(int(dim * ratio) for dim in img_obj.size)
-                    img_obj = img_obj.resize(new_size, PILImage.Resampling.LANCZOS)
-
-                # Save optimized image
-                self.ensure_directory_exists(destination)
-
-                with self.fs.open(destination, 'wb') as dest_f:
-                    img_obj.save(dest_f, format='JPEG',
-                                 quality=jpeg_quality, optimize=True)
-
-            processing_time = time.time() - start_time
-            optimized_size = self.get_file_size(destination)
-
-            return original_size, optimized_size, processing_time
-
-        except Exception as e:
-            # Fallback to simple copy
-            self.ensure_directory_exists(destination)
-            self.fs.copy(source_path, destination)
-            processing_time = time.time() - start_time
-            return original_size, original_size, processing_time
+        self.ensure_directory_exists(path)
+        with self.fs.open(path, 'wb') as f:
+            f.write(data)
 
     def copy_file(self, source_path: str, destination: str) -> None:
         """
