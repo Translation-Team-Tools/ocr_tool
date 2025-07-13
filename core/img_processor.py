@@ -51,16 +51,7 @@ class ImageProcessor:
                 image.load()  # Ensure image is fully loaded
 
             # Convert to RGB if necessary (handles various formats)
-            if image.mode in ('RGBA', 'LA', 'P'):
-                # Convert to RGB, handling transparency
-                rgb_image = PILImage.new('RGB', image.size, (255, 255, 255))
-                if image.mode == 'P':
-                    image = image.convert('RGBA')
-                if image.mode in ('RGBA', 'LA'):
-                    rgb_image.paste(image, mask=image.split()[-1])
-                image = rgb_image
-            elif image.mode != 'RGB':
-                image = image.convert('RGB')
+            image = ImageProcessor._convert_to_rgb(image)
 
             # Apply grayscale conversion if requested
             if settings.convert_to_grayscale:
@@ -68,16 +59,11 @@ class ImageProcessor:
 
             # Resize if image is too wide
             if image.width > settings.max_width:
-                # Calculate new height maintaining aspect ratio
-                aspect_ratio = image.height / image.width
-                new_height = int(settings.max_width * aspect_ratio)
-                image = image.resize((settings.max_width, new_height), PILImage.Resampling.LANCZOS)
+                image = ImageProcessor._resize_image(image, settings.max_width)
 
             # Enhance contrast if requested
             if settings.enhance_contrast:
-                enhancer = ImageEnhance.Contrast(image)
-                # Slightly increase contrast (1.2x) - good for OCR
-                image = enhancer.enhance(1.2)
+                image = ImageProcessor._enhance_contrast(image)
 
             # Save optimized image to bytes
             output_buffer = BytesIO()
@@ -91,3 +77,76 @@ class ImageProcessor:
 
         except Exception as e:
             raise ValueError(f"Failed to process image: {e}")
+
+    @staticmethod
+    def process_pil_image(image: PILImage.Image, settings: OptimizationSettings) -> PILImage.Image:
+        """
+        Process PIL Image object according to optimization settings.
+
+        Args:
+            image: PIL Image object
+            settings: Optimization settings
+
+        Returns:
+            Processed PIL Image object
+        """
+        try:
+            # Convert to RGB if necessary (handles various formats)
+            image = ImageProcessor._convert_to_rgb(image)
+
+            # Apply grayscale conversion if requested
+            if settings.convert_to_grayscale:
+                image = image.convert('L').convert('RGB')  # Convert back to RGB for JPEG
+
+            # Resize if image is too large
+            if max(image.size) > settings.max_width:
+                image = ImageProcessor._resize_image_by_max_dimension(image, settings.max_width)
+
+            # Enhance contrast if requested
+            if settings.enhance_contrast:
+                image = ImageProcessor._enhance_contrast(image)
+
+            return image
+
+        except Exception as e:
+            raise ValueError(f"Failed to process image: {e}")
+
+    @staticmethod
+    def _convert_to_rgb(image: PILImage.Image) -> PILImage.Image:
+        """Convert image to RGB format, handling transparency properly."""
+        if image.mode in ('RGBA', 'LA', 'P'):
+            # Convert to RGB, handling transparency
+            rgb_image = PILImage.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            if image.mode in ('RGBA', 'LA'):
+                if 'transparency' in image.info or len(image.split()) > 3:
+                    rgb_image.paste(image, mask=image.split()[-1])
+                else:
+                    rgb_image.paste(image)
+            else:
+                rgb_image.paste(image)
+            return rgb_image
+        elif image.mode != 'RGB':
+            return image.convert('RGB')
+        return image
+
+    @staticmethod
+    def _resize_image(image: PILImage.Image, max_width: int) -> PILImage.Image:
+        """Resize image maintaining aspect ratio with max width constraint."""
+        aspect_ratio = image.height / image.width
+        new_height = int(max_width * aspect_ratio)
+        return image.resize((max_width, new_height), PILImage.Resampling.LANCZOS)
+
+    @staticmethod
+    def _resize_image_by_max_dimension(image: PILImage.Image, max_dimension: int) -> PILImage.Image:
+        """Resize image maintaining aspect ratio with max dimension constraint."""
+        ratio = max_dimension / max(image.size)
+        new_size = tuple(int(dim * ratio) for dim in image.size)
+        return image.resize(new_size, PILImage.Resampling.LANCZOS)
+
+    @staticmethod
+    def _enhance_contrast(image: PILImage.Image, factor: float = 1.2) -> PILImage.Image:
+        """Enhance image contrast for better OCR results."""
+        enhancer = ImageEnhance.Contrast(image)
+        return enhancer.enhance(factor)
