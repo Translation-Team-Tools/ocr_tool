@@ -2,6 +2,7 @@ import hashlib
 from typing import List
 
 from fs import open_fs
+from fs.path import join, splitext, dirname
 
 supported_formats = {'.jpg', '.jpeg', '.png'}
 
@@ -48,15 +49,15 @@ class LocalStorage:
 
                 # Process files first
                 for item in items:
-                    item_path = self.fs.join(current_path, item)
+                    item_path = join(current_path, item)
                     if self.fs.isfile(item_path):
-                        _, ext = self.fs.splitext(item)
+                        _, ext = splitext(item)
                         if ext.lower() in supported_formats:
                             files.append(item_path)
 
                 # Then process subdirectories
                 for item in items:
-                    item_path = self.fs.join(current_path, item)
+                    item_path = join(current_path, item)
                     if self.fs.isdir(item_path):
                         scan_directory(item_path)
 
@@ -73,7 +74,7 @@ class LocalStorage:
         Args:
             path: Directory path relative to base path
         """
-        dir_path = self.fs.dirname(path)
+        dir_path = dirname(path)
         if dir_path and not self.fs.exists(dir_path):
             self.fs.makedirs(dir_path, recreate=True)
 
