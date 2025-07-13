@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import List
 
@@ -15,14 +16,6 @@ class ProcessingStatus(Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
 
-
-class Image:
-    def __init__(self):
-        self.image_bytes: bytes = None
-        self.vision_response: AnnotateImageResponse = None
-        self.analysis_results: List[str] = None
-
-
 class ImageModel(Base):
     """Database model for image metadata"""
     __tablename__ = 'images'
@@ -38,3 +31,10 @@ class ImageModel(Base):
 
     def __repr__(self):
         return f"<ImageModel(id={self.id}, filename='{self.filename}', status='{self.status.value}')>"
+
+@dataclass
+class Image:
+    image_bytes: bytes = None
+    vision_response: AnnotateImageResponse = None
+    analysis_results: List[str] = None
+    image_model: ImageModel = None
