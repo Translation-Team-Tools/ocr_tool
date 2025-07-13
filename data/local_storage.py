@@ -1,199 +1,135 @@
 import hashlib
 import time
-from pathlib import Path
+from io import BytesIO
 from typing import List, Tuple
 
 from PIL import Image as PILImage, ImageEnhance
+from fs import open_fs
 
 supported_formats = {'.jpg', '.jpeg', '.png'}
 
 
 class LocalStorage:
-    """
-    Handles all local file system operations for image processing.
-    Provides a clean interface for file and directory manipulations.
-    """
 
-    # Path Operations
-    @staticmethod
-    def validate_path_exists(path_str: str) -> Path:
+    def __init__(self, base_path: str):
         """
-        Validate that a path exists and return Path object.
+        Initialize LocalStorage with a base path.
 
         Args:
-            path_str: String path to validate
-
-        Returns:
-            Path object
-
-        Raises:
-            ValueError: If path doesn't exist
+            base_path: Base directory for all file operations
         """
-        path = Path(path_str)
-        if not path.exists():
-            raise ValueError(f"Path does not exist: {path_str}")
-        return path
+        self.base_path = base_path
+        self.fs = open_fs(base_path, create=True)
 
-    @staticmethod
-    def get_relative_path(file_path: Path, base_path: Path) -> Path:
-        """
-        Calculate relative path from base path.
+    def __enter__(self):
+        return self
 
-        Args:
-            file_path: Full file path
-            base_path: Base path to calculate relative to
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
 
-        Returns:
-            Relative path
-        """
-        return file_path.relative_to(base_path)
+    def close(self):
+        """Close the filesystem connection."""
+        if hasattr(self, 'fs') and self.fs:
+            self.fs.close()
 
-    @staticmethod
-    def create_output_path(output_folder: str, relative_path: str,
-                           force_extension: str = None) -> Path:
-        """
-        Create output path with optional extension change.
-
-        Args:
-            output_folder: Base output folder
-            relative_path: Relative path from input
-            force_extension: Optional extension to force (e.g., '.jpg')
-
-        Returns:
-            Output path
-        """
-        destination = Path(output_folder) / relative_path
-        if force_extension and destination.suffix.lower() != force_extension.lower():
-            destination = destination.with_suffix(force_extension)
-        return destination
-
-    # Directory Operations
-    @staticmethod
-    def ensure_directory_exists(path: Path) -> None:
-        """
-        Create directory if it doesn't exist.
-
-        Args:
-            path: Directory path to create
-        """
-        path.mkdir(parents=True, exist_ok=True)
-
-    @staticmethod
-    def discover_files_recursive(folder_path: Path) -> List[Path]:
+    def discover_files_recursive(self, subfolder: str = '/') -> List[str]:
         """
         Discover supported files recursively in folder with depth-first traversal.
 
         Args:
-            folder_path: Root folder to scan
+            subfolder: Subfolder within base path to scan (default: root)
 
         Returns:
-            List of file paths in filesystem order
+            List of relative file paths in filesystem order
         """
         files = []
 
-        def scan_directory(current_path: Path):
+        def scan_directory(current_path: str):
             try:
                 # Get sorted items
-                items = sorted(current_path.iterdir(), key=lambda x: x.name)
+                items = sorted(self.fs.listdir(current_path))
 
                 # Process files first
                 for item in items:
-                    if item.is_file() and item.suffix.lower() in supported_formats:
-                        files.append(item)
+                    item_path = self.fs.join(current_path, item)
+                    if self.fs.isfile(item_path):
+                        _, ext = self.fs.splitext(item)
+                        if ext.lower() in supported_formats:
+                            files.append(item_path)
 
                 # Then process subdirectories
                 for item in items:
-                    if item.is_dir():
-                        scan_directory(item)
+                    item_path = self.fs.join(current_path, item)
+                    if self.fs.isdir(item_path):
+                        scan_directory(item_path)
 
-            except PermissionError:
-                print(f"Warning: No permission to access {current_path}")
+            except Exception as e:
+                print(f"Warning: Cannot access {current_path}: {e}")
 
-        scan_directory(folder_path)
+        scan_directory(subfolder)
         return files
 
-    # File Operations
-    @staticmethod
-    def file_exists(path: Path) -> bool:
+    def ensure_directory_exists(self, path: str) -> None:
         """
-        Check if file exists.
+        Create directory if it doesn't exist.
 
         Args:
-            path: File path to check
-
-        Returns:
-            True if file exists
+            path: Directory path relative to base path
         """
-        return path.exists()
+        dir_path = self.fs.dirname(path)
+        if dir_path and not self.fs.exists(dir_path):
+            self.fs.makedirs(dir_path, recreate=True)
 
-    @staticmethod
-    def get_file_size(path: Path) -> int:
+    def get_file_size(self, path: str) -> int:
         """
         Get file size in bytes.
 
         Args:
-            path: File path
+            path: File path relative to base path
 
         Returns:
             File size in bytes
         """
-        return path.stat().st_size
+        return self.fs.getsize(path)
 
-    @staticmethod
-    def calculate_file_hash(file_path: Path) -> str:
+    def file_exists(self, path: str) -> bool:
+        """
+        Check if file exists.
+
+        Args:
+            path: File path relative to base path
+
+        Returns:
+            True if file exists
+        """
+        return self.fs.exists(path)
+
+    def calculate_file_hash(self, file_path: str) -> str:
         """
         Calculate SHA-256 hash of file.
 
         Args:
-            file_path: Path to file
+            file_path: Path to file relative to base path
 
         Returns:
             SHA-256 hash as hex string
         """
         sha256_hash = hashlib.sha256()
-        with open(file_path, "rb") as f:
+
+        with self.fs.open(file_path, 'rb') as f:
             for chunk in iter(lambda: f.read(4096), b""):
                 sha256_hash.update(chunk)
+
         return sha256_hash.hexdigest()
 
-    @staticmethod
-    def copy_file(source_path: Path, destination: Path) -> None:
-        """
-        Simple file copy operation.
-
-        Args:
-            source_path: Source file path
-            destination: Destination file path
-        """
-        # Ensure destination directory exists
-        LocalStorage.ensure_directory_exists(destination.parent)
-
-        with open(source_path, 'rb') as src, open(destination, 'wb') as dst:
-            dst.write(src.read())
-
-    # Image Operations
-    @staticmethod
-    def open_image(path: Path) -> PILImage.Image:
-        """
-        Open image file using PIL.
-
-        Args:
-            path: Image file path
-
-        Returns:
-            PIL Image object
-        """
-        return PILImage.open(path)
-
-    @staticmethod
-    def save_optimized_image(image: PILImage.Image, destination: Path,
+    def save_optimized_image(self, image: PILImage.Image, destination: str,
                              quality: int = 90) -> Tuple[int, int, float]:
         """
         Save optimized image and return processing stats.
 
         Args:
             image: PIL Image object to save
-            destination: Destination path
+            destination: Destination path relative to base path
             quality: JPEG quality (1-100)
 
         Returns:
@@ -202,18 +138,18 @@ class LocalStorage:
         start_time = time.time()
 
         # Ensure destination directory exists
-        LocalStorage.ensure_directory_exists(destination.parent)
+        self.ensure_directory_exists(destination)
 
         # Save as optimized JPEG
-        image.save(destination, format='JPEG', quality=quality, optimize=True)
+        with self.fs.open(destination, 'wb') as f:
+            image.save(f, format='JPEG', quality=quality, optimize=True)
 
         processing_time = time.time() - start_time
-        optimized_size = LocalStorage.get_file_size(destination)
+        optimized_size = self.get_file_size(destination)
 
-        return 0, optimized_size, processing_time  # Original size would need to be passed separately
+        return 0, optimized_size, processing_time
 
-    @staticmethod
-    def optimize_image_for_ocr(source_path: Path, destination: Path,
+    def optimize_image_for_ocr(self, source_path: str, destination: str,
                                max_width: int = 2048, jpeg_quality: int = 90,
                                enhance_contrast: bool = True,
                                convert_to_grayscale: bool = False) -> Tuple[int, int, float]:
@@ -221,8 +157,8 @@ class LocalStorage:
         Complete image optimization pipeline for OCR.
 
         Args:
-            source_path: Source image path
-            destination: Destination path
+            source_path: Source image path relative to base path
+            destination: Destination path relative to base path
             max_width: Maximum width for resizing
             jpeg_quality: JPEG quality setting
             enhance_contrast: Whether to enhance contrast
@@ -232,10 +168,13 @@ class LocalStorage:
             Tuple of (original_size, optimized_size, processing_time)
         """
         start_time = time.time()
-        original_size = LocalStorage.get_file_size(source_path)
+        original_size = self.get_file_size(source_path)
 
         try:
-            with LocalStorage.open_image(source_path) as img_obj:
+            # Read image data
+            with self.fs.open(source_path, 'rb') as f:
+                img_obj = PILImage.open(BytesIO(f.read()))
+
                 # Convert to RGB first
                 if img_obj.mode in ('RGBA', 'P', 'LA'):
                     # Create white background for transparent images
@@ -266,22 +205,57 @@ class LocalStorage:
                     img_obj = img_obj.resize(new_size, PILImage.Resampling.LANCZOS)
 
                 # Save optimized image
-                LocalStorage.ensure_directory_exists(destination.parent)
-                img_obj.save(destination, format='JPEG',
-                             quality=jpeg_quality, optimize=True)
+                self.ensure_directory_exists(destination)
+
+                with self.fs.open(destination, 'wb') as dest_f:
+                    img_obj.save(dest_f, format='JPEG',
+                                 quality=jpeg_quality, optimize=True)
 
             processing_time = time.time() - start_time
-            optimized_size = LocalStorage.get_file_size(destination)
+            optimized_size = self.get_file_size(destination)
 
             return original_size, optimized_size, processing_time
 
         except Exception as e:
             # Fallback to simple copy
-            LocalStorage.copy_file(source_path, destination)
+            self.ensure_directory_exists(destination)
+            self.fs.copy(source_path, destination)
             processing_time = time.time() - start_time
             return original_size, original_size, processing_time
 
-    # Utility Methods
+    def copy_file(self, source_path: str, destination: str) -> None:
+        """
+        Copy file within the storage.
+
+        Args:
+            source_path: Source file path relative to base path
+            destination: Destination file path relative to base path
+        """
+        self.ensure_directory_exists(destination)
+        self.fs.copy(source_path, destination)
+
+    def delete_file(self, path: str) -> None:
+        """
+        Delete file from storage.
+
+        Args:
+            path: File path relative to base path
+        """
+        if self.fs.exists(path):
+            self.fs.remove(path)
+
+    def get_absolute_path(self, relative_path: str) -> str:
+        """
+        Get absolute system path for a relative path.
+
+        Args:
+            relative_path: Path relative to base path
+
+        Returns:
+            Absolute system path
+        """
+        return self.fs.getsyspath(relative_path)
+
     @staticmethod
     def format_file_size(size_bytes: int) -> str:
         """
@@ -311,33 +285,3 @@ class LocalStorage:
         if original_size == 0:
             return 0
         return (1 - optimized_size / original_size) * 100
-
-    @staticmethod
-    def print_optimization_stats(original_size: int, optimized_size: int,
-                                 processing_time: float, original_dimensions: tuple = None,
-                                 new_dimensions: tuple = None, enhancements: List[str] = None) -> None:
-        """
-        Print detailed optimization statistics.
-
-        Args:
-            original_size: Original file size in bytes
-            optimized_size: Optimized file size in bytes
-            processing_time: Processing time in seconds
-            original_dimensions: Original image dimensions (width, height)
-            new_dimensions: New image dimensions (width, height)
-            enhancements: List of applied enhancements
-        """
-        original_mb = LocalStorage.format_file_size(original_size)
-        optimized_mb = LocalStorage.format_file_size(optimized_size)
-        compression_ratio = LocalStorage.calculate_compression_ratio(original_size, optimized_size)
-
-        size_info = f"{original_mb} → {optimized_mb}"
-        if original_dimensions and new_dimensions and original_dimensions != new_dimensions:
-            size_info += f" (resized from {original_dimensions})"
-
-        enhancement_info = ""
-        if enhancements:
-            enhancement_info = f" [{', '.join(enhancements)}]"
-
-        print(f"    Optimized: {size_info} (-{compression_ratio:.0f}%){enhancement_info} "
-              f"in {processing_time:.1f}s")
