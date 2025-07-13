@@ -5,6 +5,8 @@ from typing import List, Optional
 from data.database import Database
 from data.local_storage import LocalStorage
 from data.models import Image, ProcessingStatus
+from io import BytesIO
+from PIL import Image as PILImage
 
 
 class StorageManager:
@@ -22,7 +24,7 @@ class StorageManager:
             output_folder: Where to save optimized images (will be placed in results/ folder)
             project_root: Project root for database location
         """
-        self.input_folder_path = Path(input_folder_path)
+        self.input_folder_path = input_folder_path
 
         # Place output folder inside results directory
         if project_root:
@@ -30,16 +32,14 @@ class StorageManager:
         else:
             project_root_path = Path.cwd()
 
-        self.output_folder = project_root_path / "result" / output_folder
+        self.output_folder_path = str(project_root_path / "result" / output_folder)
 
-        # Initialize file system handler
-        self.local_storage = LocalStorage()
+        # Initialize file system handlers
+        self.input_storage = LocalStorage(input_folder_path)
+        self.output_storage = LocalStorage(self.output_folder_path)
 
         # Initialize database handler
         self.database = Database(input_folder_path, project_root)
-
-        # Validate input path exists
-        self.local_storage.validate_path_exists(str(self.input_folder_path))
 
     def discover_and_save_images(self) -> List[Image]:
         """
@@ -51,30 +51,30 @@ class StorageManager:
         print(f"Discovering images in {self.input_folder_path}...")
 
         # Discover image files using LocalStorage
-        image_files = self.local_storage.discover_files_recursive(self.input_folder_path)
+        image_files = self.input_storage.discover_files_recursive()
         images_list = []
 
         print(f"Found {len(image_files)} images")
 
-        for file_path in image_files:
+        for relative_file_path in image_files:
             try:
-                # Calculate relative path
-                relative_path = self.local_storage.get_relative_path(file_path, self.input_folder_path)
+                # Get filename from path
+                filename = Path(relative_file_path).name
 
                 # Calculate file hash
-                file_hash = self.local_storage.calculate_file_hash(file_path)
+                file_hash = self.input_storage.calculate_file_hash(relative_file_path)
 
                 # Check if image already exists in database
                 existing_image = self.database.get_image_by_hash(file_hash)
                 if existing_image:
-                    print(f"  Skipped {file_path.name} (already in database)")
+                    print(f"  Skipped {filename} (already in database)")
                     images_list.append(existing_image)
                     continue
 
                 # Create new Image object
                 image = Image(
-                    filename=file_path.name,
-                    original_file_path=str(relative_path),
+                    filename=filename,
+                    original_file_path=relative_file_path,
                     file_hash=file_hash,
                     status=ProcessingStatus.PENDING,
                     optimized_file_path="",  # Will be set during optimization
@@ -84,10 +84,11 @@ class StorageManager:
                 # Save to database
                 saved_image = self.database.add_image(image)
                 images_list.append(saved_image)
-                print(f"  Added {file_path.name} to database")
+                print(f"  Added {filename} to database")
 
             except Exception as e:
-                print(f"Warning: Could not process {file_path.name}: {e}")
+                filename = Path(relative_file_path).name if relative_file_path else "unknown"
+                print(f"Warning: Could not process {filename}: {e}")
 
         print(f"Database contains {len(images_list)} images")
         return images_list
@@ -107,55 +108,68 @@ class StorageManager:
             fresh_image.status = ProcessingStatus.PROCESSING
             fresh_image = self.database.update_image(fresh_image)
 
-            # Construct source path
-            source_path = self.input_folder_path / fresh_image.original_file_path
-
-            # Create optimized output path
-            optimized_path = self.local_storage.create_output_path(
-                str(self.output_folder),
-                fresh_image.original_file_path,
-                force_extension='.jpg'
-            )
+            # Create optimized output path (change extension to .jpg)
+            source_path = fresh_image.original_file_path
+            optimized_relative_path = self._create_optimized_path(fresh_image.original_file_path)
 
             # Check if already optimized
-            if self.local_storage.file_exists(optimized_path):
+            if self.output_storage.file_exists(optimized_relative_path):
                 print(f"    Skipped: {fresh_image.filename} already optimized")
                 # Update database with existing path
-                fresh_image.optimized_file_path = str(
-                    self.local_storage.get_relative_path(optimized_path, self.output_folder))
+                fresh_image.optimized_file_path = optimized_relative_path
                 fresh_image.status = ProcessingStatus.COMPLETED
                 fresh_image.processed_at = datetime.now()
                 return self.database.update_image(fresh_image)
 
-            # Optimize image using LocalStorage
-            original_size, optimized_size, processing_time = self.local_storage.optimize_image_for_ocr(
-                source_path=source_path,
-                destination=optimized_path,
+            # Get original file dimensions and size before optimization
+            original_size = self.input_storage.get_file_size(source_path)
+
+            # Read original image to get dimensions
+            with self.input_storage.fs.open(source_path, 'rb') as f:
+                orig_img = PILImage.open(BytesIO(f.read()))
+                original_dimensions = orig_img.size
+
+            # First copy file to output storage, then optimize it there
+            self.output_storage.ensure_directory_exists(optimized_relative_path)
+
+            # Copy original to output storage temporarily
+            temp_path = optimized_relative_path + ".temp"
+            with self.input_storage.fs.open(source_path, 'rb') as src:
+                with self.output_storage.fs.open(temp_path, 'wb') as dst:
+                    dst.write(src.read())
+
+            # Optimize image using output storage
+            original_size, optimized_size, processing_time = self.output_storage.optimize_image_for_ocr(
+                source_path=temp_path,
+                destination=optimized_relative_path,
                 max_width=max_width,
                 jpeg_quality=jpeg_quality,
                 enhance_contrast=enhance_contrast,
                 convert_to_grayscale=convert_to_grayscale
             )
 
+            # Clean up temp file
+            if self.output_storage.file_exists(temp_path):
+                self.output_storage.delete_file(temp_path)
+
             # Update Image object with results
-            fresh_image.optimized_file_path = str(
-                self.local_storage.get_relative_path(optimized_path, self.output_folder))
+            fresh_image.optimized_file_path = optimized_relative_path
             fresh_image.status = ProcessingStatus.COMPLETED
             fresh_image.processed_at = datetime.now()
 
-            # Print optimization stats
-            with self.local_storage.open_image(source_path) as orig_img:
-                original_dimensions = orig_img.size
-            with self.local_storage.open_image(optimized_path) as opt_img:
+            # Get new dimensions
+            with self.output_storage.fs.open(optimized_relative_path, 'rb') as f:
+                opt_img = PILImage.open(BytesIO(f.read()))
                 new_dimensions = opt_img.size
 
+            # Print optimization stats
             enhancements = []
             if enhance_contrast:
                 enhancements.append("contrast+")
             if convert_to_grayscale:
                 enhancements.append("grayscale")
 
-            self.local_storage.print_optimization_stats(
+            self._print_optimization_stats(
                 original_size=original_size,
                 optimized_size=optimized_size,
                 processing_time=processing_time,
@@ -225,7 +239,8 @@ class StorageManager:
 
         return processed_images
 
-    def get_image(self, image_id: int = None, file_hash: str = None, filename: str = None, status: ProcessingStatus = None):
+    def get_image(self, image_id: int = None, file_hash: str = None, filename: str = None,
+                  status: ProcessingStatus = None):
         if image_id: return self.database.get_image_by_id(image_id=image_id)
         if file_hash: return self.database.get_image_by_hash(file_hash=file_hash)
         if filename: return self.database.get_image_by_filename(filename=filename)
@@ -301,31 +316,31 @@ class StorageManager:
         print(f"   Skipped: {summary['skipped']}")
 
     # File system utility methods
-    def get_optimized_file_path(self, image: Image) -> Optional[Path]:
+    def get_optimized_file_path(self, image: Image) -> Optional[str]:
         """
-        Get full path to optimized file.
+        Get full absolute path to optimized file.
 
         Args:
             image: Image object
 
         Returns:
-            Path to optimized file or None if not optimized
+            Absolute path to optimized file or None if not optimized
         """
         if not image.optimized_file_path:
             return None
-        return self.output_folder / image.optimized_file_path
+        return self.output_storage.get_absolute_path(image.optimized_file_path)
 
-    def get_original_file_path(self, image: Image) -> Path:
+    def get_original_file_path(self, image: Image) -> str:
         """
-        Get full path to original file.
+        Get full absolute path to original file.
 
         Args:
             image: Image object
 
         Returns:
-            Path to original file
+            Absolute path to original file
         """
-        return self.input_folder_path / image.original_file_path
+        return self.input_storage.get_absolute_path(image.original_file_path)
 
     def optimized_file_exists(self, image: Image) -> bool:
         """
@@ -337,8 +352,9 @@ class StorageManager:
         Returns:
             True if optimized file exists
         """
-        optimized_path = self.get_optimized_file_path(image)
-        return optimized_path and self.local_storage.file_exists(optimized_path)
+        if not image.optimized_file_path:
+            return False
+        return self.output_storage.file_exists(image.optimized_file_path)
 
     def original_file_exists(self, image: Image) -> bool:
         """
@@ -350,12 +366,55 @@ class StorageManager:
         Returns:
             True if original file exists
         """
-        original_path = self.get_original_file_path(image)
-        return self.local_storage.file_exists(original_path)
+        return self.input_storage.file_exists(image.original_file_path)
+
+    def _create_optimized_path(self, original_path: str) -> str:
+        """
+        Create optimized file path with .jpg extension.
+
+        Args:
+            original_path: Original file path
+
+        Returns:
+            Optimized file path with .jpg extension
+        """
+        path_obj = Path(original_path)
+        return str(path_obj.with_suffix('.jpg'))
+
+    def _print_optimization_stats(self, original_size: int, optimized_size: int,
+                                  processing_time: float, original_dimensions: tuple = None,
+                                  new_dimensions: tuple = None, enhancements: List[str] = None) -> None:
+        """
+        Print detailed optimization statistics.
+
+        Args:
+            original_size: Original file size in bytes
+            optimized_size: Optimized file size in bytes
+            processing_time: Processing time in seconds
+            original_dimensions: Original image dimensions (width, height)
+            new_dimensions: New image dimensions (width, height)
+            enhancements: List of applied enhancements
+        """
+        original_mb = LocalStorage.format_file_size(original_size)
+        optimized_mb = LocalStorage.format_file_size(optimized_size)
+        compression_ratio = LocalStorage.calculate_compression_ratio(original_size, optimized_size)
+
+        size_info = f"{original_mb} → {optimized_mb}"
+        if original_dimensions and new_dimensions and original_dimensions != new_dimensions:
+            size_info += f" (resized from {original_dimensions})"
+
+        enhancement_info = ""
+        if enhancements:
+            enhancement_info = f" [{', '.join(enhancements)}]"
+
+        print(f"    Optimized: {size_info} (-{compression_ratio:.0f}%){enhancement_info} "
+              f"in {processing_time:.1f}s")
 
     def close(self):
         """Clean up resources."""
         self.database.close()
+        self.input_storage.close()
+        self.output_storage.close()
 
     def __enter__(self):
         """Context manager entry."""

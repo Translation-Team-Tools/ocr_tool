@@ -122,39 +122,6 @@ class OCRWorkflow:
         else:
             return "No images were successfully processed."
 
-    def _analyze_and_generate_output(self, images: List[Image]) -> str:
-        """
-        Modified text analysis that returns the output string.
-        Based on TextAnalyzer.analyze_images() but returns the result.
-        """
-        analyzer = TextAnalyzer()
-        image_sections: List[str] = []
-
-        for image in images:
-            try:
-                # Use the same analysis logic as TextAnalyzer
-                paragraphs = analyzer._analyze_full_text_annotation(image.vision_response)
-                if paragraphs:
-                    section_lines = analyzer._build_output(paragraphs)
-                    section = analyzer.output_generator.build_image_section(
-                        lines=section_lines,
-                        filename=image.filename
-                    )
-                    image_sections.append(section)
-                    print(f"    Analyzed: {image.filename}")
-                else:
-                    print(f"    No text found in: {image.filename}")
-
-            except Exception as e:
-                print(f"    Skipping {image.filename}: Analysis error - {e}")
-                continue
-
-        # Generate final output string using OutputGenerator
-        if image_sections:
-            return analyzer.output_generator.build_final_result(image_sections=image_sections)
-        else:
-            return ""
-
     def _generate_output_filename(self) -> str:
         """Generate timestamped filename for output"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
