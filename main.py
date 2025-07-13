@@ -14,6 +14,7 @@ sys.path.append(str(project_root))
 
 from core.img_processor import OptimizationSettings, OCRQuality
 from workflow_manager import OCRWorkflowManager
+from utils.logger import logger
 
 
 class OCRApplication:
@@ -25,9 +26,7 @@ class OCRApplication:
 
     def run(self) -> bool:
         """Main application entry point."""
-        print("=" * 60)
-        print("OCR Tool - Batch Image Text Recognition")
-        print("=" * 60)
+        logger.section_header("OCR TOOL - BATCH IMAGE TEXT RECOGNITION")
 
         try:
             # Get user inputs
@@ -42,9 +41,8 @@ class OCRApplication:
                 return False
 
             # Run workflow
-            print(f"\nProcessing images from: {input_folder}")
-            print(f"Using credentials: {credentials_path}")
-            print("-" * 60)
+            logger.info(f"Processing images from: {input_folder}")
+            logger.info(f"Using credentials: {credentials_path}")
 
             workflow_manager = OCRWorkflowManager(
                 input_folder=input_folder,
@@ -63,10 +61,10 @@ class OCRApplication:
             return success
 
         except KeyboardInterrupt:
-            print("\n\nOperation cancelled by user.")
+            logger.warning("Operation cancelled by user.")
             return False
         except Exception as e:
-            print(f"\nUnexpected error: {str(e)}")
+            logger.error(f"Unexpected error: {str(e)}")
             return False
 
     def _get_input_folder(self) -> str:
@@ -221,31 +219,30 @@ class OCRApplication:
         summary = workflow_manager.get_workflow_summary()
         input_folder_name = Path(workflow_manager.input_folder).name
 
-        print("\n" + "=" * 60)
-        print("PROCESSING COMPLETED SUCCESSFULLY")
-        print("=" * 60)
-        print(f"Total images found: {summary['total']}")
-        print(f"Successfully processed: {summary['completed']}")
-        print(f"Failed: {summary['failed']}")
-        print(f"Skipped: {summary['skipped']}")
+        logger.section_header("PROCESSING COMPLETED SUCCESSFULLY")
+        logger.success(f"Total images found: {summary['total']}")
+        logger.success(f"Successfully processed: {summary['completed']}")
+
+        if summary['failed'] > 0:
+            logger.warning(f"Failed: {summary['failed']}")
+        if summary['skipped'] > 0:
+            logger.warning(f"Skipped: {summary['skipped']}")
 
         if summary['completed'] > 0:
             result_folder = Path(self.project_root) / "result" / input_folder_name
-            print(f"\nResults saved to: {result_folder}")
-            print("- Optimized images in: optimized_images/")
-            print("- Vision API responses in: vision_responses/")
-            print("- Analysis results in: analysis_results/")
-            print("- Database: images.db")
+            logger.info(f"Results saved to: {result_folder}")
+            logger.info("- Optimized images in: optimized_images/", 1)
+            logger.info("- Vision API responses in: vision_responses/", 1)
+            logger.info("- Analysis results in: analysis_results/", 1)
+            logger.info("- Database: images.db", 1)
 
-        print("\nProcessing complete!")
+        logger.success("Processing complete!")
 
     def _show_failure_summary(self):
         """Show failure summary."""
-        print("\n" + "=" * 60)
-        print("PROCESSING FAILED")
-        print("=" * 60)
-        print("The OCR workflow encountered errors and could not complete.")
-        print("Please check the error messages above for details.")
+        logger.section_header("PROCESSING FAILED")
+        logger.error("The OCR workflow encountered errors and could not complete.")
+        logger.info("Please check the error messages above for details.")
 
 
 def main():

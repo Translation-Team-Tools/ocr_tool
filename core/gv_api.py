@@ -4,6 +4,7 @@ from google.cloud import vision
 from google.protobuf.json_format import MessageToDict
 
 from data.models import Image, ProcessingStatus
+from utils.logger import logger
 
 
 class VisionProcessor:
@@ -14,17 +15,25 @@ class VisionProcessor:
         self._initialize_client()
 
     def _initialize_client(self):
-        """Initialize Google Vision API client."""
+        """Initialize Google Vision API client with timeout settings."""
         import os
-        print(f"  → Initializing Google Vision API client...")
-        print(f"    Credentials path: {self.credentials_path}")
+        from google.api_core import client_options
+
+        logger.info("Initializing Google Vision API client", 1)
+        logger.info(f"Credentials: {self.credentials_path}", 2)
 
         try:
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.credentials_path
-            self.client = vision.ImageAnnotatorClient()
-            print(f"  ✓ Google Vision API client initialized successfully")
+
+            # Set client options with timeout
+            client_opts = client_options.ClientOptions(
+                api_endpoint="vision.googleapis.com"
+            )
+
+            self.client = vision.ImageAnnotatorClient(client_options=client_opts)
+            logger.success("Google Vision API client initialized", 1)
         except Exception as e:
-            print(f"  ✗ Failed to initialize Google Vision API client: {e}")
+            logger.error(f"Failed to initialize Google Vision API client: {e}", 1)
             raise
 
     def process_images(self, images: List[Image]) -> List[Image]:
@@ -40,18 +49,18 @@ class VisionProcessor:
         successful_count = 0
         failed_count = 0
 
-        print(f"  → Starting Vision API processing for {total_images} images...")
+        logger.info(f"Starting Vision API processing for {total_images} images", 1)
 
         for i, image in enumerate(images, 1):
             try:
                 # Skip if no image bytes loaded or already failed
                 if not image.image_bytes or image.status == ProcessingStatus.FAILED:
-                    print(f"  → Skipping image {i}/{total_images}: {image.filename} (no bytes or failed)")
+                    logger.warning(f"Skipping {image.filename} (no bytes or failed)", 2)
                     processed_images.append(image)
                     continue
 
-                print(f"  → Processing image {i}/{total_images}: {image.filename}")
-                print(f"    Image size: {len(image.image_bytes)} bytes")
+                logger.progress(i, total_images, image.filename, 1)
+                logger.info(f"Image size: {logger.format_size(len(image.image_bytes))}", 2)
 
                 # Process with Vision API
                 image.vision_response = self._call_vision_api(image.image_bytes)
@@ -59,7 +68,6 @@ class VisionProcessor:
                 processed_images.append(image)
                 processed_count += 1
                 successful_count += 1
-                print(f"  ✓ OCR completed: {image.filename}")
 
             except Exception as e:
                 # Don't modify status - just set vision_response to None and let workflow manager handle it
@@ -67,44 +75,73 @@ class VisionProcessor:
                 processed_images.append(image)
                 processed_count += 1
                 failed_count += 1
-                print(f"  ✗ OCR failed for {image.filename}: {e}")
+                logger.error(f"OCR failed for {image.filename}: {e}", 2)
 
-        print(f"  → Vision API processing summary:")
-        print(f"    Total processed: {processed_count}/{total_images}")
-        print(f"    Successful: {successful_count}")
-        print(f"    Failed: {failed_count}")
-
+        logger.success(f"Vision API processing summary: {successful_count} successful, {failed_count} failed", 1)
         return processed_images
 
     def _call_vision_api(self, image_content: bytes) -> vision.AnnotateImageResponse:
-        """Call Google Vision API for single image."""
+        """Call Google Vision API for single image with timeout handling."""
         import time
+        from google.api_core import retry
+        from google.api_core import exceptions
 
         try:
-            print(f"    → Sending request to Google Vision API...")
+            logger.status("Sending request to Google Vision API", 2)
             start_time = time.time()
 
+            # Create image object
             image = vision.Image(content=image_content)
-            response = self.client.text_detection(image=image)
+
+            # Set timeout (30 seconds) and retry policy
+            timeout = 30.0
+            retry_policy = retry.Retry(
+                initial=1.0,
+                maximum=5.0,
+                multiplier=2.0,
+                deadline=60.0  # Total deadline of 60 seconds
+            )
+
+            # Make the API call with timeout
+            response = self.client.text_detection(
+                image=image,
+                timeout=timeout,
+                retry=retry_policy
+            )
 
             duration = time.time() - start_time
-            print(f"    → API call completed in {duration:.1f}s")
 
             # Check for API errors
             if response.error.message:
+                logger.error(f"API returned error: {response.error.message}", 2)
                 raise Exception(f"Vision API error: {response.error.message}")
 
             # Check if any text was detected
             if response.text_annotations:
                 text_count = len(response.text_annotations)
-                print(f"    → Detected {text_count} text annotations")
+                full_text_length = len(response.full_text_annotation.text) if response.full_text_annotation else 0
+                logger.success(
+                    f"API call completed ({duration:.1f}s) - {text_count} annotations, {full_text_length} characters",
+                    2)
             else:
-                print(f"    → No text detected in image")
+                logger.warning(f"API call completed ({duration:.1f}s) - No text detected", 2)
 
             return response
 
+        except exceptions.DeadlineExceeded as e:
+            logger.error(f"Vision API call timed out after {timeout}s", 2)
+            raise Exception("Vision API timeout")
+        except exceptions.ServiceUnavailable as e:
+            logger.error(f"Vision API service unavailable: {e}", 2)
+            raise Exception("Vision API service unavailable")
+        except exceptions.PermissionDenied as e:
+            logger.error(f"Vision API permission denied: {e}", 2)
+            raise Exception("Vision API permission denied - check credentials")
+        except exceptions.ResourceExhausted as e:
+            logger.error(f"Vision API quota exceeded: {e}", 2)
+            raise Exception("Vision API quota exceeded")
         except Exception as e:
-            print(f"    ✗ Vision API call failed: {e}")
+            logger.error(f"Vision API call failed: {e}", 2)
             raise
 
     @staticmethod

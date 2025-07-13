@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -8,6 +9,7 @@ from core.gv_api import VisionProcessor
 from core.text_analyzer import TextAnalyzer
 from data.storage_manager import StorageManager
 from data.models import Image, ProcessingStatus
+from utils.logger import logger
 
 
 class OCRWorkflowManager:
@@ -110,21 +112,21 @@ class OCRWorkflowManager:
 
     def _discover_and_load_images(self) -> List[Image]:
         """Discover images and create Image objects with loaded bytes."""
-        print(f"  → Scanning folder: {self.input_folder}")
+        logger.status(f"Scanning folder: {self.input_folder}", 1)
         images = self.storage_manager.discover_images()
 
         if images:
-            print(f"  → Found {len(images)} images:")
+            logger.success(f"Found {len(images)} images", 1)
             total_size = 0
             for i, image in enumerate(images, 1):
                 size = len(image.image_bytes) if image.image_bytes else 0
                 total_size += size
-                print(f"    {i}. {image.filename} ({self._format_size(size)})")
+                logger.size_info(f"{i}. {image.filename}", size, 2)
 
-            print(f"  → Total images size: {self._format_size(total_size)}")
+            logger.info(f"Total dataset size: {logger.format_size(total_size)}", 1)
         else:
-            print(f"  → No supported images found in {self.input_folder}")
-            print(f"    Supported formats: JPG, JPEG, PNG")
+            logger.warning(f"No supported images found in {self.input_folder}", 1)
+            logger.info("Supported formats: JPG, JPEG, PNG", 2)
 
         return images
 
@@ -133,74 +135,75 @@ class OCRWorkflowManager:
         optimized_images = []
         total_images = len(images)
 
-        print(f"  → Starting optimization for {total_images} images...")
-        print(
-            f"  → Settings: {settings.quality.value}, max_width={settings.max_width}px, quality={settings.jpeg_quality}%")
+        logger.info(f"Starting optimization for {total_images} images", 1)
+        logger.info(
+            f"Settings: {settings.quality.value}, max_width={settings.max_width}px, quality={settings.jpeg_quality}%",
+            1)
 
         for i, image in enumerate(images, 1):
             try:
-                print(f"  → Optimizing image {i}/{total_images}: {image.filename}")
+                logger.progress(i, total_images, image.filename, 1)
 
                 # Update status to processing
                 image = self.storage_manager.update_status(image, ProcessingStatus.PROCESSING)
 
                 # Show original size
                 original_size = len(image.image_bytes)
-                print(f"    Original size: {self._format_size(original_size)}")
 
                 # Optimize image
                 optimized_bytes = ImageProcessor.process_image(image.image_bytes, settings)
                 optimized_size = len(optimized_bytes)
-                compression_ratio = ((original_size - optimized_size) / original_size) * 100
-
-                print(f"    Optimized size: {self._format_size(optimized_size)} ({compression_ratio:.1f}% reduction)")
 
                 # Save optimized image
                 optimized_filename = f"opt_{image.filename}"
                 image = self.storage_manager.save_image(image, optimized_bytes, optimized_filename)
 
                 optimized_images.append(image)
-                print(f"  ✓ Optimized and saved: {image.filename}")
+
+                # Show compression results
+                logger.compression_info(original_size, optimized_size, 2)
 
             except Exception as e:
                 # Mark as failed and continue
                 image = self.storage_manager.update_status(image, ProcessingStatus.FAILED)
-                print(f"  ✗ Failed to optimize {i}/{total_images} ({image.filename}): {e}")
+                logger.error(f"Failed to optimize {image.filename}: {e}", 2)
                 continue
 
-        print(f"  → Optimization completed: {len(optimized_images)}/{total_images} images successful")
+        logger.success(f"Optimization completed: {len(optimized_images)}/{total_images} images successful", 1)
         return optimized_images
 
     def _process_with_vision_api(self, images: List[Image]) -> List[Image]:
         """Process optimized images with Google Vision API and save responses."""
-        print(f"  → Preparing {len(images)} images for Vision API processing...")
+        logger.info(f"Preparing {len(images)} images for Vision API processing", 1)
 
         # Load optimized bytes into Image objects before processing
         successfully_loaded = 0
         for i, image in enumerate(images, 1):
             if image.optimized_file_path and image.status != ProcessingStatus.FAILED:
                 try:
+                    logger.status(f"Loading optimized image {i}/{len(images)}: {image.filename}", 1)
+
                     # Load optimized bytes for Vision API processing
                     optimized_bytes = self.storage_manager.output_storage.read_file_bytes(
                         image.optimized_file_path
                     )
                     image.image_bytes = optimized_bytes
                     successfully_loaded += 1
-                    print(f"  → Loaded optimized image {i}/{len(images)}: {image.filename}")
+
                 except Exception as e:
-                    print(f"  ✗ Failed to load optimized image {i}/{len(images)} ({image.filename}): {e}")
+                    logger.error(f"Failed to load optimized image {image.filename}: {e}", 2)
                     image = self.storage_manager.update_status(image, ProcessingStatus.FAILED)
 
-        print(f"  → Successfully loaded {successfully_loaded} optimized images")
-        print(f"  → Sending to Google Vision API...")
+        logger.success(f"Successfully loaded {successfully_loaded} optimized images", 1)
 
         # Use the public interface of VisionProcessor
+        logger.status("Sending to Google Vision API", 1)
         processed_images = self.vision_processor.process_images(images)
 
-        print(f"  → Vision API processing completed, saving responses...")
-
         # Save Vision API responses to local storage
+        logger.status("Saving Vision API responses", 1)
         saved_responses = 0
+
         for image in processed_images:
             if image.vision_response is not None:
                 try:
@@ -218,9 +221,9 @@ class OCRWorkflowManager:
                     saved_responses += 1
 
                 except Exception as e:
-                    print(f"  ✗ Failed to save Vision API response for {image.filename}: {e}")
+                    logger.error(f"Failed to save Vision API response for {image.filename}: {e}", 2)
 
-        print(f"  → Saved {saved_responses} Vision API responses to storage")
+        logger.success(f"Saved {saved_responses} Vision API responses", 1)
         return processed_images
 
     def _analyze_and_save_results(self, images: List[Image]) -> List[Image]:
@@ -229,17 +232,17 @@ class OCRWorkflowManager:
         total_images = len(images)
         successful_images = [img for img in images if img.vision_response is not None]
 
-        print(
-            f"  → Starting text analysis for {len(successful_images)}/{total_images} images with Vision API responses...")
+        logger.info(
+            f"Starting text analysis for {len(successful_images)}/{total_images} images with Vision API responses", 1)
 
         for i, image in enumerate(images, 1):
             try:
                 if image.vision_response is None:
-                    print(f"  → Skipping image {i}/{total_images}: {image.filename} (no Vision API response)")
+                    logger.warning(f"Skipping {image.filename} (no Vision API response)", 2)
                     analyzed_images.append(image)
                     continue
 
-                print(f"  → Analyzing image {i}/{total_images}: {image.filename}")
+                logger.progress(i, total_images, image.filename, 1)
 
                 # Analyze single image (create a list with one image for the analyzer)
                 analysis_result = self.text_analyzer.analyze_images([image])
@@ -247,7 +250,7 @@ class OCRWorkflowManager:
                 # Count lines/characters in result
                 lines_count = len(analysis_result.split('\n'))
                 chars_count = len(analysis_result)
-                print(f"    Analysis result: {lines_count} lines, {chars_count} characters")
+                logger.info(f"Analysis result: {lines_count} lines, {chars_count} characters", 2)
 
                 # Save analysis result
                 result_filename = f"{Path(image.filename).stem}_analysis_result.txt"
@@ -263,27 +266,17 @@ class OCRWorkflowManager:
                 image = self.storage_manager.update_status(image, ProcessingStatus.COMPLETED)
 
                 analyzed_images.append(image)
-                print(f"  ✓ Analyzed and saved: {image.filename}")
 
             except Exception as e:
                 # Mark as failed and continue
                 image = self.storage_manager.update_status(image, ProcessingStatus.FAILED)
-                print(f"  ✗ Analysis failed for {i}/{total_images} ({image.filename}): {e}")
+                logger.error(f"Analysis failed for {image.filename}: {e}", 2)
                 analyzed_images.append(image)
                 continue
 
         successful_analyses = len([img for img in analyzed_images if img.analysis_results])
-        print(f"  → Text analysis completed: {successful_analyses}/{total_images} images successful")
+        logger.success(f"Text analysis completed: {successful_analyses}/{total_images} images successful", 1)
         return analyzed_images
-
-    def _format_size(self, size_bytes: int) -> str:
-        """Format file size in human-readable format."""
-        if size_bytes < 1024:
-            return f"{size_bytes} bytes"
-        elif size_bytes < 1024 * 1024:
-            return f"{size_bytes / 1024:.1f} KB"
-        else:
-            return f"{size_bytes / (1024 * 1024):.1f} MB"
 
     def get_workflow_summary(self) -> dict:
         """Get summary of workflow processing results."""
