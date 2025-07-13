@@ -81,33 +81,18 @@ class VisionProcessor:
         return processed_images
 
     def _call_vision_api(self, image_content: bytes) -> vision.AnnotateImageResponse:
-        """Call Google Vision API for single image with timeout handling."""
+        """Call Google Vision API for single image with no timeout restrictions."""
         import time
-        from google.api_core import retry
-        from google.api_core import exceptions
+
+        logger.status("Sending request to Google Vision API", 2)
+        start_time = time.time()
+
+        # Create image object
+        image = vision.Image(content=image_content)
 
         try:
-            logger.status("Sending request to Google Vision API", 2)
-            start_time = time.time()
-
-            # Create image object
-            image = vision.Image(content=image_content)
-
-            # Set timeout (30 seconds) and retry policy
-            timeout = 30.0
-            retry_policy = retry.Retry(
-                initial=1.0,
-                maximum=5.0,
-                multiplier=2.0,
-                deadline=60.0  # Total deadline of 60 seconds
-            )
-
-            # Make the API call with timeout
-            response = self.client.text_detection(
-                image=image,
-                timeout=timeout,
-                retry=retry_policy
-            )
+            # Make the API call with NO timeout or retry restrictions
+            response = self.client.text_detection(image=image)
 
             duration = time.time() - start_time
 
@@ -128,20 +113,9 @@ class VisionProcessor:
 
             return response
 
-        except exceptions.DeadlineExceeded as e:
-            logger.error(f"Vision API call timed out after {timeout}s", 2)
-            raise Exception("Vision API timeout")
-        except exceptions.ServiceUnavailable as e:
-            logger.error(f"Vision API service unavailable: {e}", 2)
-            raise Exception("Vision API service unavailable")
-        except exceptions.PermissionDenied as e:
-            logger.error(f"Vision API permission denied: {e}", 2)
-            raise Exception("Vision API permission denied - check credentials")
-        except exceptions.ResourceExhausted as e:
-            logger.error(f"Vision API quota exceeded: {e}", 2)
-            raise Exception("Vision API quota exceeded")
         except Exception as e:
-            logger.error(f"Vision API call failed: {e}", 2)
+            duration = time.time() - start_time
+            logger.error(f"Vision API call failed after {duration:.1f}s: {e}", 2)
             raise
 
     @staticmethod
