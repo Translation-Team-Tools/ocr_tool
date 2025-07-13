@@ -4,27 +4,15 @@ from typing import List, Optional
 
 from data.database import Database
 from data.local_storage import LocalStorage
-from data.models import Image, ProcessingStatus
+from data.models import Image, ImageModel, ProcessingStatus
 
 
 class StorageManager:
-    """
-    Unified storage manager that handles both file system operations and database operations for images.
-    Provides a clean interface for image processing workflows.
-    """
+    """Simple CRUD interface for images using database and file storage."""
 
     def __init__(self, input_folder_path: str, output_folder: str = "optimized_images", project_root: str = None):
-        """
-        Initialize StorageManager with both file system and database handling.
-
-        Args:
-            input_folder_path: Path to input folder containing images
-            output_folder: Where to save optimized images (will be placed in results/ folder)
-            project_root: Project root for database location
-        """
         self.input_folder_path = input_folder_path
 
-        # Place output folder inside results directory
         if project_root:
             project_root_path = Path(project_root)
         else:
@@ -32,193 +20,132 @@ class StorageManager:
 
         self.output_folder_path = str(project_root_path / "result" / output_folder)
 
-        # Initialize file system handlers
         self.input_storage = LocalStorage(input_folder_path)
         self.output_storage = LocalStorage(self.output_folder_path)
-
-        # Initialize database handler
         self.database = Database(input_folder_path, project_root)
 
-    def discover_and_save_images(self) -> List[Image]:
-        """
-        Discover all images in input folder and save them to database.
+    def _load_image_bytes(self, image_model: ImageModel) -> bytes:
+        """Load optimized bytes if available, otherwise original bytes."""
+        if (image_model.optimized_file_path and
+                image_model.optimized_file_path != "" and
+                self.output_storage.file_exists(image_model.optimized_file_path)):
+            return self.output_storage.read_file_bytes(image_model.optimized_file_path)
+        return self.input_storage.read_file_bytes(image_model.original_file_path)
 
-        Returns:
-            List of Image objects saved to database
-        """
-        print(f"Discovering images in {self.input_folder_path}...")
+    def _create_image_from_model(self, image_model: ImageModel) -> Image:
+        """Create Image object with loaded bytes."""
+        image_bytes = self._load_image_bytes(image_model)
+        return Image(
+            image_bytes=image_bytes,
+            image_model=image_model,
+            vision_response=None,
+            analysis_results=None
+        )
 
-        # Discover image files using LocalStorage
+    def discover_images(self) -> List[Image]:
+        """Discover image files and create database records."""
         image_files = self.input_storage.discover_files_recursive()
         images_list = []
 
-        print(f"Found {len(image_files)} images")
-
         for relative_file_path in image_files:
             try:
-                # Get filename from path
                 filename = Path(relative_file_path).name
-
-                # Calculate file hash
                 file_hash = self.input_storage.calculate_file_hash(relative_file_path)
 
-                # Check if image already exists in database
-                existing_image = self.database.get_image_by_hash(file_hash)
-                if existing_image:
-                    print(f"  Skipped {filename} (already in database)")
-                    images_list.append(existing_image)
+                # Check if already exists
+                existing_model = self.database.get_image_by_hash(file_hash)
+                if existing_model:
+                    images_list.append(self._create_image_from_model(existing_model))
                     continue
 
-                # Create new Image object
-                image = Image(
+                # Create new database record
+                image_model = ImageModel(
                     filename=filename,
                     original_file_path=relative_file_path,
                     file_hash=file_hash,
-                    status=ProcessingStatus.PENDING,
-                    optimized_file_path="",  # Will be set during optimization
-                    vision_json_path=""  # Will be set during OCR processing
+                    status=ProcessingStatus.PENDING
                 )
 
-                # Save to database
-                saved_image = self.database.add_image(image)
-                images_list.append(saved_image)
-                print(f"  Added {filename} to database")
+                saved_model = self.database.add_image(image_model)
+                images_list.append(self._create_image_from_model(saved_model))
 
             except Exception as e:
-                filename = Path(relative_file_path).name if relative_file_path else "unknown"
-                print(f"Warning: Could not process {filename}: {e}")
+                print(f"Warning: Could not process {relative_file_path}: {e}")
 
-        print(f"Database contains {len(images_list)} images")
         return images_list
 
-    def get_image(self, image_id: int = None, file_hash: str = None, filename: str = None,
-                  status: ProcessingStatus = None):
-        if image_id: return self.database.get_image_by_id(image_id=image_id)
-        if file_hash: return self.database.get_image_by_hash(file_hash=file_hash)
-        if filename: return self.database.get_image_by_filename(filename=filename)
-        if status: return self.database.get_images_by_status(status=status)
-        return False
+    def get_image(self, image_id: int = None, file_hash: str = None,
+                  filename: str = None, status: ProcessingStatus = None) -> Optional[Image]:
+        """Get single image by various criteria."""
+        model = self.database.get_image(image_id, file_hash, filename, status)
+        if isinstance(model, list) and model:
+            model = model[0]  # Take first for status queries
+        return self._create_image_from_model(model) if model else None
 
     def get_all_images(self) -> List[Image]:
         """Get all images."""
-        return self.database.get_all_images()
+        models = self.database.get_all_images()
+        return [self._create_image_from_model(model) for model in models]
+
+    def get_images_by_status(self, status: ProcessingStatus) -> List[Image]:
+        """Get images by status."""
+        models = self.database.get_images_by_status(status)
+        return [self._create_image_from_model(model) for model in models]
 
     def search_images(self, search_term: str) -> List[Image]:
-        """Search images by filename or path."""
-        return self.database.search_images(search_term)
+        """Search images."""
+        models = self.database.search_images(search_term)
+        return [self._create_image_from_model(model) for model in models]
 
-    def update_image_status(self, image_id: int, status: ProcessingStatus) -> Optional[Image]:
-        """
-        Update image status.
+    def update_image(self, image: Image) -> Image:
+        """Update image in database."""
+        if not image.image_model:
+            raise ValueError("Image must have image_model")
 
-        Args:
-            image_id: ID of image to update
-            status: New status
+        if image.image_model.status in [ProcessingStatus.COMPLETED, ProcessingStatus.FAILED]:
+            image.image_model.processed_at = datetime.now()
 
-        Returns:
-            Updated Image object or None if not found
-        """
-        image = self.get_image(image_id=image_id)
-        if image:
-            image.status = status
-            if status in [ProcessingStatus.COMPLETED, ProcessingStatus.FAILED]:
-                image.processed_at = datetime.now()
-            return self.database.update_image(image)
-        return None
+        updated_model = self.database.update_image(image.image_model)
+        return Image(
+            image_bytes=image.image_bytes,
+            vision_response=image.vision_response,
+            analysis_results=image.analysis_results,
+            image_model=updated_model
+        )
 
-    def delete_image(self, image_id: int) -> bool:
-        """
-        Delete image from database.
+    def update_status(self, image: Image, status: ProcessingStatus) -> Image:
+        """Update image status."""
+        image.image_model.status = status
+        return self.update_image(image)
 
-        Args:
-            image_id: ID of image to delete
+    def save_image(self, image: Image, image_bytes: bytes, filename: str = None) -> Image:
+        """Save image bytes to storage and update database."""
+        if not image.image_model:
+            raise ValueError("Image must have image_model")
 
-        Returns:
-            True if deleted, False if not found
-        """
-        return self.database.delete_image(image_id)
+        save_filename = filename or image.image_model.filename
+        self.output_storage.write_file_bytes(save_filename, image_bytes)
+
+        image.image_model.optimized_file_path = save_filename
+        return self.update_image(image)
+
+    def delete_image(self, image: Image) -> bool:
+        """Delete image from database."""
+        if not image.image_model or not image.image_model.id:
+            return False
+        return self.database.delete_image(image.image_model.id)
 
     def get_processing_summary(self) -> dict:
-        """
-        Get summary of processing status.
-
-        Returns:
-            Dictionary with counts by status
-        """
-        all_images = self.get_all_images()
-        summary = {
-            'total': len(all_images),
-            'pending': len([img for img in all_images if img.status == ProcessingStatus.PENDING]),
-            'processing': len([img for img in all_images if img.status == ProcessingStatus.PROCESSING]),
-            'completed': len([img for img in all_images if img.status == ProcessingStatus.COMPLETED]),
-            'failed': len([img for img in all_images if img.status == ProcessingStatus.FAILED]),
-            'skipped': len([img for img in all_images if img.status == ProcessingStatus.SKIPPED])
+        """Get processing status counts."""
+        models = self.database.get_all_images()
+        return {
+            'total': len(models),
+            'pending': sum(1 for m in models if m.status == ProcessingStatus.PENDING),
+            'processing': sum(1 for m in models if m.status == ProcessingStatus.PROCESSING),
+            'completed': sum(1 for m in models if m.status == ProcessingStatus.COMPLETED),
+            'failed': sum(1 for m in models if m.status == ProcessingStatus.FAILED),
+            'skipped': sum(1 for m in models if m.status == ProcessingStatus.SKIPPED)
         }
-        return summary
-
-    def print_processing_summary(self):
-        """Print a formatted processing summary."""
-        summary = self.get_processing_summary()
-        print(f"\n📊 Processing Summary:")
-        print(f"   Total images: {summary['total']}")
-        print(f"   Pending: {summary['pending']}")
-        print(f"   Processing: {summary['processing']}")
-        print(f"   Completed: {summary['completed']}")
-        print(f"   Failed: {summary['failed']}")
-        print(f"   Skipped: {summary['skipped']}")
-
-    # File system utility methods
-    def get_optimized_file_path(self, image: Image) -> Optional[str]:
-        """
-        Get full absolute path to optimized file.
-
-        Args:
-            image: Image object
-
-        Returns:
-            Absolute path to optimized file or None if not optimized
-        """
-        if not image.optimized_file_path:
-            return None
-        return self.output_storage.get_absolute_path(image.optimized_file_path)
-
-    def get_original_file_path(self, image: Image) -> str:
-        """
-        Get full absolute path to original file.
-
-        Args:
-            image: Image object
-
-        Returns:
-            Absolute path to original file
-        """
-        return self.input_storage.get_absolute_path(image.original_file_path)
-
-    def optimized_file_exists(self, image: Image) -> bool:
-        """
-        Check if optimized file exists on disk.
-
-        Args:
-            image: Image object
-
-        Returns:
-            True if optimized file exists
-        """
-        if not image.optimized_file_path:
-            return False
-        return self.output_storage.file_exists(image.optimized_file_path)
-
-    def original_file_exists(self, image: Image) -> bool:
-        """
-        Check if original file exists on disk.
-
-        Args:
-            image: Image object
-
-        Returns:
-            True if original file exists
-        """
-        return self.input_storage.file_exists(image.original_file_path)
 
     def close(self):
         """Clean up resources."""
@@ -227,9 +154,7 @@ class StorageManager:
         self.output_storage.close()
 
     def __enter__(self):
-        """Context manager entry."""
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
         self.close()
