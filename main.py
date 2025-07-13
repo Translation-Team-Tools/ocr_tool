@@ -69,7 +69,7 @@ class OCRApplication:
             print(f"\nUnexpected error: {str(e)}")
             return False
 
-    def _get_input_folder(self) -> str | None:
+    def _get_input_folder(self) -> str:
         """Get and validate input folder from user."""
         print("\n1. Input Folder Selection")
         print("-" * 30)
@@ -174,7 +174,7 @@ class OCRApplication:
             else:
                 print("Please enter 'y' for yes or 'n' for no.")
 
-    def _validate_credentials(self) -> str | None:
+    def _validate_credentials(self) -> str:
         """Validate Google Cloud credentials."""
         print("\n3. Google Cloud Credentials")
         print("-" * 30)
@@ -219,6 +219,7 @@ class OCRApplication:
     def _show_success_summary(self, workflow_manager: OCRWorkflowManager):
         """Show success summary with processing statistics."""
         summary = workflow_manager.get_workflow_summary()
+        input_folder_name = Path(workflow_manager.input_folder).name
 
         print("\n" + "=" * 60)
         print("PROCESSING COMPLETED SUCCESSFULLY")
@@ -229,11 +230,12 @@ class OCRApplication:
         print(f"Skipped: {summary['skipped']}")
 
         if summary['completed'] > 0:
-            result_folder = Path(self.project_root) / "result"
+            result_folder = Path(self.project_root) / "result" / input_folder_name
             print(f"\nResults saved to: {result_folder}")
             print("- Optimized images in: optimized_images/")
             print("- Vision API responses in: vision_responses/")
             print("- Analysis results in: analysis_results/")
+            print("- Database: images.db")
 
         print("\nProcessing complete!")
 

@@ -13,12 +13,19 @@ class StorageManager:
     def __init__(self, input_folder_path: str, output_folder: str = "optimized_images", project_root: str = None):
         self.input_folder_path = input_folder_path
 
-        if project_root:
-            project_root_path = Path(project_root)
+        # Use the output_folder path as provided (could be relative name or full path)
+        if Path(output_folder).is_absolute():
+            # Already a full path, use it directly
+            self.output_folder_path = str(output_folder)
         else:
-            project_root_path = Path.cwd()
+            # Relative path, build it under project root
+            if project_root:
+                project_root_path = Path(project_root)
+            else:
+                project_root_path = Path.cwd()
 
-        self.output_folder_path = str(project_root_path / "result" / output_folder)
+            input_folder_name = Path(input_folder_path).name
+            self.output_folder_path = str(project_root_path / "result" / input_folder_name / output_folder)
 
         self.input_storage = LocalStorage(input_folder_path)
         self.output_storage = LocalStorage(self.output_folder_path)
