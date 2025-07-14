@@ -236,6 +236,11 @@ def main():
     """Application entry point."""
     app = OCRApplication()
     success = app.run()
+
+    # Add pause before closing - this prevents the console window from closing immediately
+    print("\n" + "=" * 50)
+    input("Press Enter to close...")
+
     return 0 if success else 1
 
 
