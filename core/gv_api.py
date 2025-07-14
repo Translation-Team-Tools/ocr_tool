@@ -41,55 +41,37 @@ class VisionProcessor:
 
         Takes Image objects with loaded image_bytes and populates vision_response.
         Does NOT modify status or handle storage - that's the workflow manager's job.
+        This method is now silent - progress is handled by the calling workflow manager.
         """
         processed_images = []
-        total_images = len(images)
-        successful_count = 0
-        failed_count = 0
 
-        logger.info(f"Processing {total_images} images with Vision API")
-
-        for i, image in enumerate(images, 1):
+        for image in images:
             try:
                 # Skip if no image bytes loaded or already failed
                 if not image.image_bytes or image.status == ProcessingStatus.FAILED:
                     processed_images.append(image)
                     continue
 
-                logger.progress(i, total_images, image.filename)
-
-                # Process with Vision API
+                # Process with Vision API (silently)
                 image.vision_response = self._call_vision_api(image.image_bytes)
                 processed_images.append(image)
-                successful_count += 1
 
             except Exception as e:
                 # Don't modify status - just set vision_response to None and let workflow manager handle it
                 image.vision_response = None
                 processed_images.append(image)
-                failed_count += 1
-                logger.error(f"OCR failed for {image.filename}: {e}")
-
-        if failed_count > 0:
-            logger.warning(f"Vision API completed: {successful_count} successful, {failed_count} failed")
-        else:
-            logger.success(f"Vision API completed: {successful_count} images processed")
+                # Let the calling code handle error reporting
 
         return processed_images
 
     def _call_vision_api(self, image_content: bytes) -> vision.AnnotateImageResponse:
         """Call Google Vision API for single image with no timeout restrictions."""
-        import time
-
-        start_time = time.time()
-
         # Create image object
         image = vision.Image(content=image_content)
 
         try:
             # Make the API call with NO timeout or retry restrictions
-            response = self.client.document_text_detection(
-                image=image)  # IT'S IMPORTANT TO USE document_text_detection()
+            response = self.client.document_text_detection(image=image) # IT'S IMPORTANT TO USE document_text_detection()
 
             # Check for API errors
             if response.error.message:
@@ -98,8 +80,7 @@ class VisionProcessor:
             return response
 
         except Exception as e:
-            duration = time.time() - start_time
-            logger.error(f"Vision API call failed after {duration:.1f}s: {e}")
+            # Let the calling code handle error reporting
             raise
 
     @staticmethod

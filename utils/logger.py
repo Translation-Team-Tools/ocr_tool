@@ -4,6 +4,8 @@ from enum import Enum
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.live import Live
+from rich.text import Text
 
 
 class LogLevel(Enum):
@@ -21,14 +23,20 @@ class VisualLogger:
         self.console = Console()
         self.current_status = ""
         self.status_line_active = False
+        self._live_display = None
+        self._last_progress_text = ""
 
     def clear_status_line(self):
         """Clear the current status line."""
-        # Rich handles this automatically, so we don't need to do anything
-        pass
+        if self._live_display:
+            self._live_display.stop()
+            self._live_display = None
+        self.status_line_active = False
 
     def log(self, message: str, level: LogLevel = LogLevel.INFO, indent: int = 0):
         """Log a message with color coding using Rich."""
+        # Clear any active live display first
+        self.clear_status_line()
 
         # Choose color and icon based on level
         if level == LogLevel.SUCCESS:
@@ -55,13 +63,14 @@ class VisualLogger:
 
     def status(self, message: str, indent: int = 0):
         """Update status line using Rich."""
+        self.clear_status_line()
         indent_str = "  " * indent
         self.console.print(f"{indent_str}⟳ {message}...", style="bold cyan")
         self.status_line_active = True
         self.current_status = message
 
     def progress(self, current: int, total: int, item_name: str = "", indent: int = 0):
-        """Show progress with a visual progress bar - matches original API."""
+        """Show progress with a visual progress bar that updates in place."""
         # Calculate percentage
         percentage = (current / total) * 100 if total > 0 else 0
 
@@ -73,12 +82,35 @@ class VisualLogger:
         # Format message
         indent_str = "  " * indent
         if item_name:
-            message = f"{indent_str}⟳ Processing [{bar}] {current}/{total} ({percentage:.0f}%) - {item_name}"
+            progress_text = f"{indent_str}⟳ Processing [{bar}] {current}/{total} ({percentage:.0f}%) - {item_name}"
         else:
-            message = f"{indent_str}⟳ Progress [{bar}] {current}/{total} ({percentage:.0f}%)"
+            progress_text = f"{indent_str}⟳ Progress [{bar}] {current}/{total} ({percentage:.0f}%)"
 
-        self.console.print(message, style="bold cyan")
+        # If this is the first progress call or we're not in live mode, start live display
+        if not self._live_display:
+            self._live_display = Live(
+                Text(progress_text, style="bold cyan"),
+                console=self.console,
+                refresh_per_second=10
+            )
+            self._live_display.start()
+        else:
+            # Update the existing live display
+            self._live_display.update(Text(progress_text, style="bold cyan"))
+
+        self._last_progress_text = progress_text
         self.status_line_active = True
+
+    def progress_complete(self, message: str = None):
+        """Complete the progress display and optionally show a final message."""
+        if self._live_display:
+            self._live_display.stop()
+            self._live_display = None
+
+        if message:
+            self.success(message)
+
+        self.status_line_active = False
 
     def progress_bar_context(self, items, description="Processing"):
         """Create a Rich progress bar context manager for more advanced usage."""
@@ -93,6 +125,9 @@ class VisualLogger:
 
     def step_header(self, step_number: int, title: str, total_steps: int = None):
         """Print a major step header using Rich panels."""
+        # Clear any active progress display
+        self.clear_status_line()
+
         if total_steps:
             step_info = f"Step {step_number}/{total_steps}"
         else:
@@ -108,6 +143,7 @@ class VisualLogger:
 
     def section_header(self, title: str):
         """Print a section header using Rich."""
+        self.clear_status_line()
         self.console.print()
         self.console.rule(f"[bold white]{title}[/bold white]", style="white")
 
@@ -129,6 +165,7 @@ class VisualLogger:
 
     def timing(self, message: str, duration: float, indent: int = 0):
         """Log a message with timing information."""
+        self.clear_status_line()
         timing_str = f"{duration:.1f}s"
         indent_str = "  " * indent
         # Print success message with timing info
@@ -137,6 +174,7 @@ class VisualLogger:
 
     def size_info(self, filename: str, size: int, indent: int = 0):
         """Log file size information."""
+        self.clear_status_line()
         size_str = self.format_size(size)
         indent_str = "  " * indent
         self.console.print(f"{indent_str}→ {filename}", style="bold blue", end="")
@@ -144,6 +182,7 @@ class VisualLogger:
 
     def compression_info(self, original_size: int, optimized_size: int, indent: int = 0):
         """Log compression information."""
+        self.clear_status_line()
         reduction = ((original_size - optimized_size) / original_size) * 100 if original_size > 0 else 0
         original_str = self.format_size(original_size)
         optimized_str = self.format_size(optimized_size)
@@ -177,11 +216,10 @@ if __name__ == "__main__":
     logger.section_header("Image Processing Demo")
     logger.step_header(1, "Loading Images", 3)
 
-    # Test the progress method that matches your original API
+    # Test the progress method that updates in place
     for i in range(4):
         logger.progress(i + 1, 4, f"image_{i + 1}.jpg")
-        time.sleep(0.2)
+        time.sleep(0.5)
 
-    logger.success("All images loaded successfully")
+    logger.progress_complete("All images loaded successfully")
     logger.timing("Total processing time", 2.1)
-    logger.compression_info(1024000, 512000)

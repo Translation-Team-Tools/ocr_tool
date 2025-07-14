@@ -133,13 +133,13 @@ class OCRWorkflowManager:
                 logger.error(f"Failed to optimize {image.filename}: {e}")
                 continue
 
-        # Show overall compression results
+        # Complete progress and show overall compression results
         if total_original_size > 0:
             reduction = ((total_original_size - total_optimized_size) / total_original_size) * 100
-            logger.success(
+            logger.progress_complete(
                 f"Optimization complete: {len(optimized_images)}/{total_images} images optimized ({reduction:.1f}% size reduction)")
         else:
-            logger.success(f"Optimization complete: {len(optimized_images)}/{total_images} images")
+            logger.progress_complete(f"Optimization complete: {len(optimized_images)}/{total_images} images")
 
         return optimized_images
 
@@ -162,8 +162,36 @@ class OCRWorkflowManager:
 
         logger.info(f"Loaded {successfully_loaded} optimized images for Vision API")
 
-        # Use the public interface of VisionProcessor
-        processed_images = self.vision_processor.process_images(images)
+        # Use the public interface of VisionProcessor but handle progress in workflow
+        logger.info(f"Processing with Vision API...")
+
+        processed_images = []
+        total_to_process = len([img for img in images if img.image_bytes and img.status != ProcessingStatus.FAILED])
+
+        if total_to_process == 0:
+            return images
+
+        current_processed = 0
+
+        for image in images:
+            if not image.image_bytes or image.status == ProcessingStatus.FAILED:
+                processed_images.append(image)
+                continue
+
+            current_processed += 1
+            logger.progress(current_processed, total_to_process, image.filename)
+
+            try:
+                # Process single image list with Vision API
+                single_result = self.vision_processor.process_images([image])
+                processed_images.append(single_result[0])
+            except Exception as e:
+                image.vision_response = None
+                processed_images.append(image)
+                print(f"   OCR failed for {image.filename}: {e}")
+
+        successful_vision = len([img for img in processed_images if img.vision_response is not None])
+        logger.progress_complete(f"Vision API complete: {successful_vision}/{total_to_process} images processed")
 
         # Save Vision API responses to local storage
         saved_responses = 0
@@ -232,7 +260,7 @@ class OCRWorkflowManager:
                 continue
 
         successful_analyses = len([img for img in analyzed_images if img.analysis_results])
-        logger.success(f"Text analysis complete: {successful_analyses}/{total_images} results saved")
+        logger.progress_complete(f"Text analysis complete: {successful_analyses}/{total_images} results saved")
         return analyzed_images
 
     def get_workflow_summary(self) -> dict:
