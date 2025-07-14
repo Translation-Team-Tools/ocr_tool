@@ -121,4 +121,9 @@ class VisionProcessor:
     @staticmethod
     def get_dict(vision_response: vision.AnnotateImageResponse) -> dict:
         """Convert Vision API response to dictionary for JSON serialization."""
-        return MessageToDict(vision_response._pb)
+        return MessageToDict(
+            vision_response._pb,
+            always_print_fields_with_no_presence=True,
+            preserving_proto_field_name=True,
+            use_integers_for_enums=False
+        )
