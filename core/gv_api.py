@@ -92,7 +92,7 @@ class VisionProcessor:
 
         try:
             # Make the API call with NO timeout or retry restrictions
-            response = self.client.text_detection(image=image)
+            response = self.client.document_text_detection(image=image) # IT'S IMPORTANT TO USE document_text_detection()
 
             duration = time.time() - start_time
 
