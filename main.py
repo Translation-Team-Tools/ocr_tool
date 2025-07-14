@@ -8,8 +8,20 @@ import os
 import sys
 from pathlib import Path
 
+
+def get_project_root():
+    """Get the correct project root directory, handling both script and executable modes."""
+    if getattr(sys, 'frozen', False):
+        # Running as PyInstaller executable
+        # Use the directory where the executable is located
+        return Path(sys.executable).resolve().parent
+    else:
+        # Running as script
+        return Path(__file__).resolve().parent
+
+
 # Add the project root to Python path
-project_root = Path(__file__).resolve().parent
+project_root = get_project_root()
 sys.path.append(str(project_root))
 
 from core.img_processor import OptimizationSettings, OCRQuality
