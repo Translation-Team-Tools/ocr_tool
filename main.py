@@ -214,7 +214,16 @@ class OCRApplication:
         summary = workflow_manager.get_workflow_summary()
         input_folder_name = Path(workflow_manager.input_folder).name
 
-        logger.success(f"Processing complete! {summary['completed']}/{summary['total']} images processed successfully")
+        from rich.text import Text
+
+        # Main success message with highlighted numbers
+        text = Text()
+        text.append("Processing complete! ")
+        text.append(f"{summary['completed']}/{summary['total']}", style="bright_white")
+        text.append(" images processed successfully")
+
+        logger.console.print("✓ ", style="green", end="")
+        logger.console.print(text)
 
         if summary['failed'] > 0 or summary['skipped'] > 0:
             logger.warning(f"Issues: {summary['failed']} failed, {summary['skipped']} skipped")

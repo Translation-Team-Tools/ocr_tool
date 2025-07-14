@@ -34,43 +34,58 @@ class VisualLogger:
         self.status_line_active = False
 
     def log(self, message: str, level: LogLevel = LogLevel.INFO, indent: int = 0):
-        """Log a message with color coding using Rich."""
+        """Log a message with subtle color coding using Rich."""
         # Clear any active live display first
         self.clear_status_line()
 
         # Choose color and icon based on level
         if level == LogLevel.SUCCESS:
-            style = "bold green"
+            icon_style = "green"
             icon = "✓"
         elif level == LogLevel.ERROR:
-            style = "bold red"
+            icon_style = "red"
             icon = "✗"
         elif level == LogLevel.WARNING:
-            style = "bold yellow"
+            icon_style = "yellow"
             icon = "⚠"
         elif level == LogLevel.PROGRESS:
-            style = "bold cyan"
+            icon_style = "cyan"
             icon = "→"
         else:  # INFO
-            style = "bold blue"
+            icon_style = "blue"
             icon = "→"
 
         # Create indentation
         indent_str = "  " * indent
 
-        # Print colored message
-        self.console.print(f"{indent_str}{icon} {message}", style=style)
+        # Print message with colored icon only
+        from rich.text import Text
+        text = Text()
+        text.append(f"{indent_str}")
+        text.append(f"{icon} ", style=icon_style)
+        text.append(message)
+
+        self.console.print(text)
 
     def status(self, message: str, indent: int = 0):
         """Update status line using Rich."""
         self.clear_status_line()
+        from rich.text import Text
+
         indent_str = "  " * indent
-        self.console.print(f"{indent_str}⟳ {message}...", style="bold cyan")
+        text = Text()
+        text.append(f"{indent_str}")
+        text.append("⟳ ", style="cyan")
+        text.append(f"{message}...")
+
+        self.console.print(text)
         self.status_line_active = True
         self.current_status = message
 
     def progress(self, current: int, total: int, item_name: str = "", indent: int = 0):
         """Show progress with a visual progress bar that updates in place."""
+        from rich.text import Text
+
         # Calculate percentage
         percentage = (current / total) * 100 if total > 0 else 0
 
@@ -79,26 +94,33 @@ class VisualLogger:
         filled = int((current / total) * bar_width) if total > 0 else 0
         bar = "█" * filled + "░" * (bar_width - filled)
 
-        # Format message
+        # Create styled text
         indent_str = "  " * indent
+        progress_text = Text()
+        progress_text.append(f"{indent_str}")
+        progress_text.append("⟳ ", style="cyan")
+        progress_text.append("Processing [")
+        progress_text.append(bar, style="cyan")
+        progress_text.append("] ")
+        progress_text.append(f"{current}/{total}", style="bright_white")
+        progress_text.append(f" ({percentage:.0f}%)")
+
         if item_name:
-            progress_text = f"{indent_str}⟳ Processing [{bar}] {current}/{total} ({percentage:.0f}%) - {item_name}"
-        else:
-            progress_text = f"{indent_str}⟳ Progress [{bar}] {current}/{total} ({percentage:.0f}%)"
+            progress_text.append(" - ")
+            progress_text.append(item_name, style="dim")
 
         # If this is the first progress call or we're not in live mode, start live display
         if not self._live_display:
             self._live_display = Live(
-                Text(progress_text, style="bold cyan"),
+                progress_text,
                 console=self.console,
                 refresh_per_second=10
             )
             self._live_display.start()
         else:
             # Update the existing live display
-            self._live_display.update(Text(progress_text, style="bold cyan"))
+            self._live_display.update(progress_text)
 
-        self._last_progress_text = progress_text
         self.status_line_active = True
 
     def progress_complete(self, message: str = None):
@@ -134,8 +156,8 @@ class VisualLogger:
             step_info = f"Step {step_number}"
 
         panel = Panel(
-            f"[bold white]{step_info}: {title}[/bold white]",
-            style="blue",
+            f"[white]{step_info}: {title}[/white]",
+            style="dim blue",
             padding=(0, 1)
         )
         self.console.print()
@@ -145,7 +167,7 @@ class VisualLogger:
         """Print a section header using Rich."""
         self.clear_status_line()
         self.console.print()
-        self.console.rule(f"[bold white]{title}[/bold white]", style="white")
+        self.console.rule(f"[white]{title}[/white]", style="dim white")
 
     def info(self, message: str, indent: int = 0):
         """Log info message."""
@@ -166,36 +188,54 @@ class VisualLogger:
     def timing(self, message: str, duration: float, indent: int = 0):
         """Log a message with timing information."""
         self.clear_status_line()
+        from rich.text import Text
+
         timing_str = f"{duration:.1f}s"
         indent_str = "  " * indent
-        # Print success message with timing info
-        self.console.print(f"{indent_str}✓ {message}", style="bold green", end="")
-        self.console.print(f" [dim]({timing_str})[/dim]")
+
+        text = Text()
+        text.append(f"{indent_str}")
+        text.append("✓ ", style="green")
+        text.append(message)
+        text.append(f" ({timing_str})", style="dim")
+
+        self.console.print(text)
 
     def size_info(self, filename: str, size: int, indent: int = 0):
         """Log file size information."""
         self.clear_status_line()
+        from rich.text import Text
+
         size_str = self.format_size(size)
         indent_str = "  " * indent
-        self.console.print(f"{indent_str}→ {filename}", style="bold blue", end="")
-        self.console.print(f" [dim]- {size_str}[/dim]")
+
+        text = Text()
+        text.append(f"{indent_str}")
+        text.append("→ ", style="blue")
+        text.append(filename)
+        text.append(f" - {size_str}", style="dim")
+
+        self.console.print(text)
 
     def compression_info(self, original_size: int, optimized_size: int, indent: int = 0):
         """Log compression information."""
         self.clear_status_line()
+        from rich.text import Text
+
         reduction = ((original_size - optimized_size) / original_size) * 100 if original_size > 0 else 0
         original_str = self.format_size(original_size)
         optimized_str = self.format_size(optimized_size)
 
-        style = "bold green" if reduction > 0 else "yellow"
-
+        color = "green" if reduction > 0 else "yellow"
         indent_str = "  " * indent
-        self.console.print(
-            f"{indent_str}→ Size: {original_str} → {optimized_str}",
-            style="bold blue",
-            end=""
-        )
-        self.console.print(f" [{style}]({reduction:.1f}% reduction)[/{style}]")
+
+        text = Text()
+        text.append(f"{indent_str}")
+        text.append("→ ", style="blue")
+        text.append(f"Size: {original_str} → {optimized_str}")
+        text.append(f" ({reduction:.1f}% reduction)", style=color)
+
+        self.console.print(text)
 
     @staticmethod
     def format_size(size_bytes: int) -> str:

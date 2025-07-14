@@ -86,12 +86,23 @@ class OCRWorkflowManager:
 
     def _discover_and_load_images(self) -> List[Image]:
         """Discover images and create Image objects with loaded bytes."""
+        from rich.text import Text
+
         logger.status(f"Scanning {Path(self.input_folder).name}")
         images = self.storage_manager.discover_images()
 
         if images:
             total_size = sum(len(img.image_bytes) if img.image_bytes else 0 for img in images)
-            logger.success(f"Found {len(images)} images ({logger.format_size(total_size)} total)")
+
+            # Create formatted success message
+            text = Text()
+            text.append("✓ ", style="green")
+            text.append("Found ")
+            text.append(f"{len(images)}", style="bright_white")
+            text.append(" images (")
+            text.append(logger.format_size(total_size), style="bright_white")
+            text.append(" total)")
+            logger.console.print(text)
         else:
             logger.warning(f"No supported images found (JPG, JPEG, PNG)")
 
@@ -134,10 +145,21 @@ class OCRWorkflowManager:
                 continue
 
         # Complete progress and show overall compression results
+        from rich.text import Text
+
         if total_original_size > 0:
             reduction = ((total_original_size - total_optimized_size) / total_original_size) * 100
-            logger.progress_complete(
-                f"Optimization complete: {len(optimized_images)}/{total_images} images optimized ({reduction:.1f}% size reduction)")
+
+            text = Text()
+            text.append("Optimization complete: ")
+            text.append(f"{len(optimized_images)}/{total_images}", style="bright_white")
+            text.append(" images optimized (")
+            text.append(f"{reduction:.1f}%", style="green")
+            text.append(" size reduction)")
+
+            logger.progress_complete()
+            logger.console.print("✓ ", style="green", end="")
+            logger.console.print(text)
         else:
             logger.progress_complete(f"Optimization complete: {len(optimized_images)}/{total_images} images")
 
@@ -191,7 +213,16 @@ class OCRWorkflowManager:
                 print(f"   OCR failed for {image.filename}: {e}")
 
         successful_vision = len([img for img in processed_images if img.vision_response is not None])
-        logger.progress_complete(f"Vision API complete: {successful_vision}/{total_to_process} images processed")
+
+        from rich.text import Text
+        text = Text()
+        text.append("Vision API complete: ")
+        text.append(f"{successful_vision}/{total_to_process}", style="bright_white")
+        text.append(" images processed")
+
+        logger.progress_complete()
+        logger.console.print("✓ ", style="green", end="")
+        logger.console.print(text)
 
         # Save Vision API responses to local storage
         saved_responses = 0
@@ -260,7 +291,16 @@ class OCRWorkflowManager:
                 continue
 
         successful_analyses = len([img for img in analyzed_images if img.analysis_results])
-        logger.progress_complete(f"Text analysis complete: {successful_analyses}/{total_images} results saved")
+
+        from rich.text import Text
+        text = Text()
+        text.append("Text analysis complete: ")
+        text.append(f"{successful_analyses}/{total_images}", style="bright_white")
+        text.append(" results saved")
+
+        logger.progress_complete()
+        logger.console.print("✓ ", style="green", end="")
+        logger.console.print(text)
         return analyzed_images
 
     def get_workflow_summary(self) -> dict:
