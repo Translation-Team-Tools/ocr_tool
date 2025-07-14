@@ -41,8 +41,7 @@ class OCRApplication:
                 return False
 
             # Run workflow
-            logger.info(f"Processing images from: {input_folder}")
-            logger.info(f"Using credentials: {credentials_path}")
+            logger.info(f"Starting OCR processing: {Path(input_folder).name}")
 
             workflow_manager = OCRWorkflowManager(
                 input_folder=input_folder,
@@ -56,7 +55,7 @@ class OCRApplication:
             if success:
                 self._show_success_summary(workflow_manager)
             else:
-                self._show_failure_summary()
+                logger.error("Processing failed. Check error messages above.")
 
             return success
 
@@ -149,13 +148,9 @@ class OCRApplication:
             convert_to_grayscale=convert_to_grayscale
         )
 
-        # Show selected settings
-        print(f"\nSelected settings:")
-        print(f"  Quality: {quality.value}")
-        print(f"  Max width: {settings.max_width}px")
-        print(f"  JPEG quality: {settings.jpeg_quality}%")
-        print(f"  Enhance contrast: {settings.enhance_contrast}")
-        print(f"  Convert to grayscale: {settings.convert_to_grayscale}")
+        # Show selected settings in one line
+        print(
+            f"\nUsing {quality.value} quality with {'contrast enhancement' if settings.enhance_contrast else 'no enhancement'}")
 
         return settings
 
@@ -179,10 +174,10 @@ class OCRApplication:
 
         # Check default location
         if os.path.exists(self.credentials_path):
-            print(f"Found credentials at: {self.credentials_path}")
+            print(f"Using credentials: {Path(self.credentials_path).name}")
             return self.credentials_path
 
-        print(f"Credentials not found at default location: {self.credentials_path}")
+        print(f"Credentials not found at default location")
 
         while True:
             custom_path = input("Enter path to Google credentials JSON file: ").strip()
@@ -219,30 +214,13 @@ class OCRApplication:
         summary = workflow_manager.get_workflow_summary()
         input_folder_name = Path(workflow_manager.input_folder).name
 
-        logger.section_header("PROCESSING COMPLETED SUCCESSFULLY")
-        logger.success(f"Total images found: {summary['total']}")
-        logger.success(f"Successfully processed: {summary['completed']}")
+        logger.success(f"Processing complete! {summary['completed']}/{summary['total']} images processed successfully")
 
-        if summary['failed'] > 0:
-            logger.warning(f"Failed: {summary['failed']}")
-        if summary['skipped'] > 0:
-            logger.warning(f"Skipped: {summary['skipped']}")
+        if summary['failed'] > 0 or summary['skipped'] > 0:
+            logger.warning(f"Issues: {summary['failed']} failed, {summary['skipped']} skipped")
 
-        if summary['completed'] > 0:
-            result_folder = Path(self.project_root) / "result" / input_folder_name
-            logger.info(f"Results saved to: {result_folder}")
-            logger.info("- Optimized images in: optimized_images/", 1)
-            logger.info("- Vision API responses in: vision_responses/", 1)
-            logger.info("- Analysis results in: analysis_results/", 1)
-            logger.info("- Database: images.db", 1)
-
-        logger.success("Processing complete!")
-
-    def _show_failure_summary(self):
-        """Show failure summary."""
-        logger.section_header("PROCESSING FAILED")
-        logger.error("The OCR workflow encountered errors and could not complete.")
-        logger.info("Please check the error messages above for details.")
+        result_folder = Path(self.project_root) / "result" / input_folder_name
+        logger.info(f"Results saved to: {result_folder}")
 
 
 def main():

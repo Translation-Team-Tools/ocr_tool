@@ -1,11 +1,9 @@
-import sys
 import time
 from enum import Enum
-from typing import Optional
+
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 from rich.panel import Panel
-from rich.text import Text
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 
 class LogLevel(Enum):

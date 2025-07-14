@@ -19,8 +19,7 @@ class VisionProcessor:
         import os
         from google.api_core import client_options
 
-        logger.info("Initializing Google Vision API client", 1)
-        logger.info(f"Credentials: {self.credentials_path}", 2)
+        logger.info("Initializing Google Vision API client")
 
         try:
             os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.credentials_path
@@ -31,9 +30,9 @@ class VisionProcessor:
             )
 
             self.client = vision.ImageAnnotatorClient(client_options=client_opts)
-            logger.success("Google Vision API client initialized", 1)
+            logger.success("Google Vision API client ready")
         except Exception as e:
-            logger.error(f"Failed to initialize Google Vision API client: {e}", 1)
+            logger.error(f"Failed to initialize Google Vision API client: {e}")
             raise
 
     def process_images(self, images: List[Image]) -> List[Image]:
@@ -45,46 +44,43 @@ class VisionProcessor:
         """
         processed_images = []
         total_images = len(images)
-        processed_count = 0
         successful_count = 0
         failed_count = 0
 
-        logger.info(f"Starting Vision API processing for {total_images} images", 1)
+        logger.info(f"Processing {total_images} images with Vision API")
 
         for i, image in enumerate(images, 1):
             try:
                 # Skip if no image bytes loaded or already failed
                 if not image.image_bytes or image.status == ProcessingStatus.FAILED:
-                    logger.warning(f"Skipping {image.filename} (no bytes or failed)", 2)
                     processed_images.append(image)
                     continue
 
-                logger.progress(i, total_images, image.filename, 1)
-                logger.info(f"Image size: {logger.format_size(len(image.image_bytes))}", 2)
+                logger.progress(i, total_images, image.filename)
 
                 # Process with Vision API
                 image.vision_response = self._call_vision_api(image.image_bytes)
-
                 processed_images.append(image)
-                processed_count += 1
                 successful_count += 1
 
             except Exception as e:
                 # Don't modify status - just set vision_response to None and let workflow manager handle it
                 image.vision_response = None
                 processed_images.append(image)
-                processed_count += 1
                 failed_count += 1
-                logger.error(f"OCR failed for {image.filename}: {e}", 2)
+                logger.error(f"OCR failed for {image.filename}: {e}")
 
-        logger.success(f"Vision API processing summary: {successful_count} successful, {failed_count} failed", 1)
+        if failed_count > 0:
+            logger.warning(f"Vision API completed: {successful_count} successful, {failed_count} failed")
+        else:
+            logger.success(f"Vision API completed: {successful_count} images processed")
+
         return processed_images
 
     def _call_vision_api(self, image_content: bytes) -> vision.AnnotateImageResponse:
         """Call Google Vision API for single image with no timeout restrictions."""
         import time
 
-        logger.status("Sending request to Google Vision API", 2)
         start_time = time.time()
 
         # Create image object
@@ -92,30 +88,18 @@ class VisionProcessor:
 
         try:
             # Make the API call with NO timeout or retry restrictions
-            response = self.client.document_text_detection(image=image) # IT'S IMPORTANT TO USE document_text_detection()
-
-            duration = time.time() - start_time
+            response = self.client.document_text_detection(
+                image=image)  # IT'S IMPORTANT TO USE document_text_detection()
 
             # Check for API errors
             if response.error.message:
-                logger.error(f"API returned error: {response.error.message}", 2)
                 raise Exception(f"Vision API error: {response.error.message}")
-
-            # Check if any text was detected
-            if response.text_annotations:
-                text_count = len(response.text_annotations)
-                full_text_length = len(response.full_text_annotation.text) if response.full_text_annotation else 0
-                logger.success(
-                    f"API call completed ({duration:.1f}s) - {text_count} annotations, {full_text_length} characters",
-                    2)
-            else:
-                logger.warning(f"API call completed ({duration:.1f}s) - No text detected", 2)
 
             return response
 
         except Exception as e:
             duration = time.time() - start_time
-            logger.error(f"Vision API call failed after {duration:.1f}s: {e}", 2)
+            logger.error(f"Vision API call failed after {duration:.1f}s: {e}")
             raise
 
     @staticmethod
